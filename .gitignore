@@ -30,3 +30,8 @@ xcuserdata/
 # Editors
 .vscode/
 .idea/
+
+# Build-process docs (local only, not part of the shipped/portfolio repo)
+CLAUDE_HANDOFF.md
+CLAUDE.md
+PROGRESS.md
