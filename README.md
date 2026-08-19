@@ -1,10 +1,10 @@
 # Atlas
 
-A personal assistant, starting with a text-first email-to-calendar tool. See [`assistant-spec.md`](assistant-spec.md) for the full product/architecture spec and [`CLAUDE_HANDOFF.md`](CLAUDE_HANDOFF.md) for the build plan. Live increment status is in [`PROGRESS.md`](PROGRESS.md).
+A personal assistant, starting with a text-first email-to-calendar tool. See [`assistant-spec.md`](assistant-spec.md) for the full product/architecture spec.
 
 ## Status
 
-Early scaffolding — see `PROGRESS.md` for what's built so far.
+Early scaffolding: backend health check is up. iOS app not started yet.
 
 ## Repo layout
 
@@ -15,11 +15,26 @@ ios/       SwiftUI app (iOS 26+)
 
 ## Backend
 
-Setup and run instructions land in Increment 0.2 (`PROGRESS.md`).
+Requires Python 3.9+.
+
+```
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# run the dev server
+uvicorn app.main:app --reload
+
+# run tests
+pytest
+```
+
+`GET /health` returns `{"status": "ok"}` once the server is running.
 
 ## iOS
 
-Setup and run instructions land in Increment 0.3 (`PROGRESS.md`). Bundle ID: `com.p1tan.atlas`, minimum iOS 26.
+Not started yet. Bundle ID: `com.p1tan.atlas`, minimum iOS 26.
 
 ## Environment variables
 
