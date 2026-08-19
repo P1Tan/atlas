@@ -34,7 +34,13 @@ pytest
 
 ## iOS
 
-Not started yet. Bundle ID: `com.p1tan.atlas`, minimum iOS 26.
+Requires Xcode 26+. The project is generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) from `ios/project.yml`; `Atlas.xcodeproj` is committed, so XcodeGen is only needed if you change `project.yml` and want to regenerate it (`cd ios && xcodegen generate`).
+
+```
+open ios/Atlas.xcodeproj
+```
+
+Build and run on a simulator (Cmd-R). The app calls `http://127.0.0.1:8000/health` on launch and shows the result — start the backend first (see above) so it has something to reach. Bundle ID: `com.p1tan.atlas`, minimum iOS 26.
 
 ## Environment variables
 

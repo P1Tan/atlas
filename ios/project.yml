@@ -1,0 +1,36 @@
+name: Atlas
+options:
+  bundleIdPrefix: com.p1tan
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+targets:
+  Atlas:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: Atlas
+    info:
+      path: Atlas/Info.plist
+      properties:
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.p1tan.atlas
+        SWIFT_VERSION: 5.0
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+schemes:
+  Atlas:
+    build:
+      targets:
+        Atlas: all
+    run:
+      config: Debug
+    test:
+      config: Debug
