@@ -25,12 +25,30 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
+  AtlasUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: AtlasUITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.p1tan.atlas.uitests
+        SWIFT_VERSION: 5.0
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+    dependencies:
+      - target: Atlas
 schemes:
   Atlas:
     build:
       targets:
         Atlas: all
+        AtlasUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
+      targets:
+        - AtlasUITests

@@ -15,6 +15,7 @@ struct PasteInputView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(Color.secondary.opacity(0.3))
                 )
+                .accessibilityIdentifier("EmailTextEditor")
 
             Button {
                 Task { await viewModel.extract(text: emailText) }
@@ -32,11 +33,13 @@ struct PasteInputView: View {
                 emailText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || viewModel.isLoading
             )
+            .accessibilityIdentifier("ExtractButton")
 
             if let errorMessage = viewModel.errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
                     .font(.footnote)
+                    .accessibilityIdentifier("ExtractErrorMessage")
             }
 
             resultsSection
@@ -57,9 +60,11 @@ struct PasteInputView: View {
                 EventRow(event: event)
             }
             .listStyle(.plain)
+            .accessibilityIdentifier("EventList")
         } else if viewModel.hasSearched && !viewModel.isLoading {
             Text("No events found.")
                 .foregroundStyle(.secondary)
+                .accessibilityIdentifier("NoEventsFoundLabel")
         }
     }
 }
@@ -72,6 +77,7 @@ private struct EventRow: View {
             HStack {
                 Text(event.title)
                     .font(.subheadline.bold())
+                    .accessibilityIdentifier("EventTitle")
                 Spacer()
                 ConfidenceBadge(confidence: event.confidence)
             }
