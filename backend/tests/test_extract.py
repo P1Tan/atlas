@@ -97,6 +97,50 @@ def test_extract_requires_text_and_reference_datetime() -> None:
     assert response.status_code == 422
 
 
+def test_extract_downgrades_confidence_when_date_is_unresolvable() -> None:
+    _override_extractor(
+        [
+            ExtractedEventDraft(
+                title="Follow up",
+                date_phrase="sometime soon",
+                source_excerpt="Let's follow up sometime soon.",
+                confidence="high",
+            )
+        ]
+    )
+    client = TestClient(app)
+
+    response = client.post("/extract", json=_valid_request())
+    assert response.status_code == 200
+
+    event = response.json()[0]
+    assert event["resolved_start"] is None
+    assert event["confidence"] == "low"
+    assert any("sometime soon" in note for note in event["ambiguities"])
+
+
+def test_extract_caps_high_confidence_when_llm_reports_ambiguities() -> None:
+    _override_extractor(
+        [
+            ExtractedEventDraft(
+                title="Team sync",
+                date_phrase="next Thursday at 3pm",
+                source_excerpt="Let's meet next Thursday at 3pm to sync on the launch.",
+                confidence="high",
+                ambiguities=["year not specified"],
+            )
+        ]
+    )
+    client = TestClient(app)
+
+    response = client.post("/extract", json=_valid_request())
+    assert response.status_code == 200
+
+    event = response.json()[0]
+    assert event["resolved_start"] is not None
+    assert event["confidence"] == "medium"
+
+
 def test_extract_returns_422_on_unresolvable_timezone() -> None:
     _override_extractor(
         [
