@@ -4,7 +4,7 @@ A personal assistant, starting with a text-first email-to-calendar tool. See [`a
 
 ## Status
 
-Early scaffolding: backend health check is up. iOS app not started yet.
+Backend: health check + email-to-calendar extraction (`/extract`) with LLM-based event extraction, deterministic date resolution, and ambiguity flagging. iOS: paste-input screen calling `/extract` and listing proposed events read-only; editable review and calendar writes are next.
 
 ## Repo layout
 
@@ -40,7 +40,16 @@ Requires Xcode 26+. The project is generated with [XcodeGen](https://github.com/
 open ios/Atlas.xcodeproj
 ```
 
-Build and run on a simulator (Cmd-R). The app calls `http://127.0.0.1:8000/health` on launch and shows the result — start the backend first (see above) so it has something to reach. Bundle ID: `com.p1tan.atlas`, minimum iOS 26.
+Build and run on a simulator (Cmd-R). The app talks to `http://127.0.0.1:8000` — start the backend first (see above) so it has something to reach. Bundle ID: `com.p1tan.atlas`, minimum iOS 26.
+
+### UI tests
+
+`AtlasUITests` drives the real app in the simulator via XCUITest (no mocking). The extraction-flow tests need the backend running locally first:
+
+```
+cd ios
+xcodebuild test -project Atlas.xcodeproj -scheme Atlas -destination 'platform=iOS Simulator,name=iPhone 17'
+```
 
 ## Environment variables
 
