@@ -9,12 +9,18 @@
 /* Begin PBXBuildFile section */
 		3BFF9F643D1162FCDAD5E557 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA748FA518458563D7059A21 /* ContentView.swift */; };
 		97F64F47C99747F2D425C52B /* AtlasApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B039968FC134F8A1AC6E2337 /* AtlasApp.swift */; };
+		CD7CBBAEC16045AB0E3D1C05 /* ExtractionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0F3BCCDEA6B5102950E50B /* ExtractionViewModel.swift */; };
 		D194A18372CE9E0BDD2525D1 /* HealthChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C8B66E4E4959258732F50C2 /* HealthChecker.swift */; };
+		E53365C9F66B94B13A2FD9B2 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F1CCC6F07DC94BF9D6C509 /* Models.swift */; };
+		EC951CE1C805C1E4F64718AC /* PasteInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E6818C4CB4B99F23DE4A307 /* PasteInputView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		27F1CCC6F07DC94BF9D6C509 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		413A56C9FFE04C7BBD65B964 /* Atlas.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Atlas.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6DBB2D8DA3BA7AA013C6D346 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		6E6818C4CB4B99F23DE4A307 /* PasteInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteInputView.swift; sourceTree = "<group>"; };
+		7B0F3BCCDEA6B5102950E50B /* ExtractionViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtractionViewModel.swift; sourceTree = "<group>"; };
 		8C8B66E4E4959258732F50C2 /* HealthChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthChecker.swift; sourceTree = "<group>"; };
 		B039968FC134F8A1AC6E2337 /* AtlasApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtlasApp.swift; sourceTree = "<group>"; };
 		FA748FA518458563D7059A21 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -26,8 +32,11 @@
 			children = (
 				B039968FC134F8A1AC6E2337 /* AtlasApp.swift */,
 				FA748FA518458563D7059A21 /* ContentView.swift */,
+				7B0F3BCCDEA6B5102950E50B /* ExtractionViewModel.swift */,
 				8C8B66E4E4959258732F50C2 /* HealthChecker.swift */,
 				6DBB2D8DA3BA7AA013C6D346 /* Info.plist */,
+				27F1CCC6F07DC94BF9D6C509 /* Models.swift */,
+				6E6818C4CB4B99F23DE4A307 /* PasteInputView.swift */,
 			);
 			path = Atlas;
 			sourceTree = "<group>";
@@ -108,7 +117,10 @@
 			files = (
 				97F64F47C99747F2D425C52B /* AtlasApp.swift in Sources */,
 				3BFF9F643D1162FCDAD5E557 /* ContentView.swift in Sources */,
+				CD7CBBAEC16045AB0E3D1C05 /* ExtractionViewModel.swift in Sources */,
 				D194A18372CE9E0BDD2525D1 /* HealthChecker.swift in Sources */,
+				E53365C9F66B94B13A2FD9B2 /* Models.swift in Sources */,
+				EC951CE1C805C1E4F64718AC /* PasteInputView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

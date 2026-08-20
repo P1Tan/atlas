@@ -4,34 +4,41 @@ struct ContentView: View {
     @StateObject private var healthChecker = HealthChecker()
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("Atlas")
-                .font(.largeTitle.bold())
-
-            statusView
-
-            Button("Retry") {
-                Task { await healthChecker.check() }
-            }
+        NavigationStack {
+            PasteInputView()
+                .navigationTitle("Atlas")
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        BackendStatusIndicator(status: healthChecker.status) {
+                            Task { await healthChecker.check() }
+                        }
+                    }
+                }
         }
-        .padding()
         .task {
             await healthChecker.check()
         }
     }
+}
 
-    @ViewBuilder
-    private var statusView: some View {
-        switch healthChecker.status {
-        case .loading:
-            ProgressView("Checking backend…")
-        case .ok(let status):
-            Label("Backend: \(status)", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        case .failed(let message):
-            Label("Backend unreachable: \(message)", systemImage: "xmark.octagon.fill")
-                .foregroundStyle(.red)
+private struct BackendStatusIndicator: View {
+    let status: HealthStatus
+    let retry: () -> Void
+
+    var body: some View {
+        Button(action: retry) {
+            switch status {
+            case .loading:
+                ProgressView()
+            case .ok:
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            case .failed:
+                Image(systemName: "xmark.octagon.fill")
+                    .foregroundStyle(.red)
+            }
         }
+        .accessibilityLabel("Backend status")
     }
 }
 
