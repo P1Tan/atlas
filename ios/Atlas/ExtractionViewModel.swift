@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 final class ExtractionViewModel: ObservableObject {
-    @Published private(set) var events: [ExtractedEvent] = []
+    @Published var draftEvents: [DraftEvent] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var hasSearched = false
@@ -17,12 +17,13 @@ final class ExtractionViewModel: ObservableObject {
         errorMessage = nil
         defer { isLoading = false }
 
+        let referenceDate = Date()
         let referenceFormatter = ISO8601DateFormatter()
         referenceFormatter.formatOptions = [.withInternetDateTime]
 
         let request = ExtractRequest(
             text: trimmed,
-            referenceDatetime: referenceFormatter.string(from: Date()),
+            referenceDatetime: referenceFormatter.string(from: referenceDate),
             timezone: TimeZone.current.identifier
         )
 
@@ -50,7 +51,8 @@ final class ExtractionViewModel: ObservableObject {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             decoder.dateDecodingStrategy = .iso8601
-            events = try decoder.decode([ExtractedEvent].self, from: data)
+            let events = try decoder.decode([ExtractedEvent].self, from: data)
+            draftEvents = events.map { DraftEvent(from: $0, fallbackStart: referenceDate) }
             hasSearched = true
         } catch {
             errorMessage = error.localizedDescription

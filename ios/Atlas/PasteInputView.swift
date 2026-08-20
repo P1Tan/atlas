@@ -51,13 +51,15 @@ struct PasteInputView: View {
 
     @ViewBuilder
     private var resultsSection: some View {
-        if !viewModel.events.isEmpty {
+        if !viewModel.draftEvents.isEmpty {
             Text("Proposed events")
                 .font(.headline)
                 .padding(.top, 8)
 
-            List(viewModel.events) { event in
-                EventRow(event: event)
+            List {
+                ForEach($viewModel.draftEvents) { $event in
+                    EditableEventRow(event: $event)
+                }
             }
             .listStyle(.plain)
             .accessibilityIdentifier("EventList")
@@ -69,28 +71,60 @@ struct PasteInputView: View {
     }
 }
 
-private struct EventRow: View {
-    let event: ExtractedEvent
+private struct EditableEventRow: View {
+    @Binding var event: DraftEvent
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(event.title)
+                TextField("Title", text: $event.title)
                     .font(.subheadline.bold())
                     .accessibilityIdentifier("EventTitle")
                 Spacer()
                 ConfidenceBadge(confidence: event.confidence)
             }
 
-            Text(dateSummary)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            dateSection
 
-            if let location = event.location {
-                Label(location, systemImage: "mappin.and.ellipse")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+            Toggle("All-day", isOn: $event.allDay)
+                .font(.footnote)
+                .accessibilityIdentifier("EventAllDayToggle")
+
+            Toggle("Add end time", isOn: $event.hasEnd)
+                .font(.footnote)
+                .accessibilityIdentifier("EventHasEndToggle")
+
+            if event.hasEnd {
+                DatePicker(
+                    "Ends", selection: $event.end,
+                    displayedComponents: event.allDay ? [.date] : [.date, .hourAndMinute]
+                )
+                .font(.footnote)
+                .accessibilityIdentifier("EventEndDatePicker")
             }
+
+            HStack {
+                Image(systemName: "mappin.and.ellipse")
+                    .foregroundStyle(.secondary)
+                TextField("Location", text: $event.location)
+            }
+            .font(.footnote)
+            .accessibilityIdentifier("EventLocation")
+
+            HStack(alignment: .top) {
+                Image(systemName: "note.text")
+                    .foregroundStyle(.secondary)
+                TextField("Notes", text: $event.notes, axis: .vertical)
+            }
+            .font(.footnote)
+            .accessibilityIdentifier("EventNotes")
+
+            Divider()
+
+            Text("From: \u{201C}\(event.sourceExcerpt)\u{201D}")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .italic()
 
             ForEach(event.ambiguities, id: \.self) { note in
                 Label(note, systemImage: "questionmark.circle")
@@ -101,14 +135,26 @@ private struct EventRow: View {
         .padding(.vertical, 4)
     }
 
-    private var dateSummary: String {
-        guard let start = event.resolvedStart else {
-            return "Unresolved date: \(event.datePhrase)"
+    @ViewBuilder
+    private var dateSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            DatePicker(
+                "Starts", selection: $event.start,
+                displayedComponents: event.allDay ? [.date] : [.date, .hourAndMinute]
+            )
+            .font(.footnote)
+            .accessibilityIdentifier("EventStartDatePicker")
+
+            if event.dateNeedsAttention {
+                Label("Couldn't resolve a date from \u{201C}\(event.datePhrase)\u{201D} — please check this.", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("EventDateWarning")
+            }
         }
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = event.allDay ? .none : .short
-        return formatter.string(from: start)
+        .padding(8)
+        .background(event.dateNeedsAttention ? Color.red.opacity(0.08) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
