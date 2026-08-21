@@ -17,6 +17,7 @@ targets:
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
+        NSCalendarsFullAccessUsageDescription: "Atlas needs calendar access to add events you've confirmed from extracted emails."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.p1tan.atlas

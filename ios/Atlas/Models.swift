@@ -26,6 +26,13 @@ struct ExtractRequest: Encodable {
     let timezone: String
 }
 
+enum CalendarWriteStatus: Equatable {
+    case notAdded
+    case adding
+    case added
+    case failed(String)
+}
+
 /// A user-editable, in-progress event derived from an `ExtractedEvent`.
 /// `id` is a stable UUID independent of the (mutable) content, so editing a
 /// field doesn't change the row's identity mid-edit.
@@ -39,6 +46,7 @@ struct DraftEvent: Identifiable {
     var allDay: Bool
     var location: String
     var notes: String
+    var writeStatus: CalendarWriteStatus = .notAdded
 
     // Context from extraction, shown but not directly user-editable.
     let datePhrase: String

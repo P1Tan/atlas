@@ -96,6 +96,27 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(app.datePickers["EventEndDatePicker"].waitForExistence(timeout: 5))
     }
 
+    /// Requires calendar access pre-granted for com.p1tan.atlas, e.g.
+    /// `xcrun simctl privacy <device> grant calendar com.p1tan.atlas`,
+    /// so this exercises the actual EventKit write, not a permission prompt.
+    func testAddToCalendarWritesEventSuccessfully() throws {
+        let app = XCUIApplication()
+        app.launch()
+        extract(app, text: "Let's meet next Thursday at 3pm to sync on the launch.")
+
+        XCTAssertTrue(app.textFields.matching(identifier: "EventTitle").firstMatch.waitForExistence(timeout: 30))
+
+        let addButton = app.buttons["AddToCalendarButton"]
+        XCTAssertTrue(addButton.exists)
+        addButton.tap()
+
+        let addedPredicate = NSPredicate(format: "label CONTAINS 'Added to Calendar'")
+        let expectation = XCTNSPredicateExpectation(predicate: addedPredicate, object: addButton)
+        XCTAssertEqual(XCTWaiter().wait(for: [expectation], timeout: 10), .completed)
+        XCTAssertFalse(addButton.isEnabled)
+        XCTAssertFalse(app.staticTexts["AddToCalendarError"].exists)
+    }
+
     private func extract(_ app: XCUIApplication, text: String) {
         let textEditor = app.textViews["EmailTextEditor"]
         XCTAssertTrue(textEditor.waitForExistence(timeout: 5))

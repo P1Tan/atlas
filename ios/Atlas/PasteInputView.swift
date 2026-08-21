@@ -3,6 +3,7 @@ import SwiftUI
 struct PasteInputView: View {
     @State private var emailText: String = ""
     @StateObject private var viewModel = ExtractionViewModel()
+    @State private var calendarWriter = CalendarWriter()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -58,7 +59,7 @@ struct PasteInputView: View {
 
             List {
                 ForEach($viewModel.draftEvents) { $event in
-                    EditableEventRow(event: $event)
+                    EditableEventRow(event: $event, calendarWriter: calendarWriter)
                 }
             }
             .listStyle(.plain)
@@ -73,6 +74,7 @@ struct PasteInputView: View {
 
 private struct EditableEventRow: View {
     @Binding var event: DraftEvent
+    let calendarWriter: CalendarWriter
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -131,6 +133,8 @@ private struct EditableEventRow: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
+
+            addToCalendarSection
         }
         .padding(.vertical, 4)
     }
@@ -155,6 +159,50 @@ private struct EditableEventRow: View {
         .padding(8)
         .background(event.dateNeedsAttention ? Color.red.opacity(0.08) : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    @ViewBuilder
+    private var addToCalendarSection: some View {
+        Button {
+            Task { await confirmAndWrite() }
+        } label: {
+            switch event.writeStatus {
+            case .notAdded, .failed:
+                Text(event.writeStatus == .notAdded ? "Add to Calendar" : "Retry Add to Calendar")
+                    .frame(maxWidth: .infinity)
+            case .adding:
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+            case .added:
+                Label("Added to Calendar", systemImage: "checkmark.circle.fill")
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .buttonStyle(.bordered)
+        .tint(event.writeStatus == .added ? .green : .accentColor)
+        .disabled(event.writeStatus == .adding || event.writeStatus == .added)
+        .accessibilityIdentifier("AddToCalendarButton")
+
+        if case .failed(let message) = event.writeStatus {
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+                .accessibilityIdentifier("AddToCalendarError")
+        }
+    }
+
+    /// The single explicit confirmation point: nothing is written to the
+    /// calendar until the user taps this button for this specific event.
+    private func confirmAndWrite() async {
+        event.writeStatus = .adding
+        switch await calendarWriter.write(event) {
+        case .success:
+            event.writeStatus = .added
+        case .permissionDenied:
+            event.writeStatus = .failed("Calendar access denied. Enable it in Settings > Atlas.")
+        case .failure(let message):
+            event.writeStatus = .failed(message)
+        }
     }
 }
 
