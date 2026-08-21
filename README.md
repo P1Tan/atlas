@@ -4,7 +4,7 @@ A personal assistant, starting with a text-first email-to-calendar tool. See [`a
 
 ## Status
 
-Backend: health check + email-to-calendar extraction (`/extract`) with LLM-based event extraction, deterministic date resolution, and ambiguity flagging. iOS: paste-input screen calling `/extract` and listing proposed events read-only; editable review and calendar writes are next.
+Backend: health check + email-to-calendar extraction (`/extract`) with LLM-based event extraction, deterministic date resolution, and ambiguity flagging. iOS: paste text or share an email from Mail's share sheet, review and edit the proposed events, then confirm to write them to the calendar via EventKit. Next up: live Gmail integration (Milestone 3).
 
 ## Repo layout
 
@@ -44,9 +44,11 @@ Build and run on a simulator (Cmd-R). The app talks to `http://127.0.0.1:8000` â
 
 ### UI tests
 
-`AtlasUITests` drives the real app in the simulator via XCUITest (no mocking). The extraction-flow tests need the backend running locally first:
+`AtlasUITests` drives the real app in the simulator via XCUITest (no mocking). The extraction-flow tests need the backend running locally first, and the calendar-write test needs calendar access pre-granted (otherwise it'll hit a permission prompt XCUITest doesn't handle):
 
 ```
+xcrun simctl privacy <device-udid> grant calendar com.p1tan.atlas
+
 cd ios
 xcodebuild test -project Atlas.xcodeproj -scheme Atlas -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
