@@ -4,6 +4,7 @@ struct PasteInputView: View {
     @State private var emailText: String = ""
     @StateObject private var viewModel = ExtractionViewModel()
     @State private var calendarWriter = CalendarWriter()
+    @EnvironmentObject private var shareInbox: ShareInbox
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -48,6 +49,12 @@ struct PasteInputView: View {
             Spacer()
         }
         .padding()
+        .onChange(of: shareInbox.pendingText) { _, newValue in
+            guard let text = newValue else { return }
+            emailText = text
+            shareInbox.pendingText = nil
+            Task { await viewModel.extract(text: text) }
+        }
     }
 
     @ViewBuilder
@@ -230,4 +237,5 @@ private struct ConfidenceBadge: View {
 
 #Preview {
     PasteInputView()
+        .environmentObject(ShareInbox())
 }

@@ -44,4 +44,5 @@ private struct BackendStatusIndicator: View {
 
 #Preview {
     ContentView()
+        .environmentObject(ShareInbox())
 }

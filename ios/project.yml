@@ -18,6 +18,10 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         NSCalendarsFullAccessUsageDescription: "Atlas needs calendar access to add events you've confirmed from extracted emails."
+        CFBundleURLTypes:
+          - CFBundleURLName: com.p1tan.atlas
+            CFBundleURLSchemes:
+              - atlas
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.p1tan.atlas
@@ -26,6 +30,34 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGNING_REQUIRED: NO
         CODE_SIGNING_ALLOWED: NO
+    dependencies:
+      - target: AtlasShareExtension
+        embed: true
+  AtlasShareExtension:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: AtlasShareExtension
+    info:
+      path: AtlasShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: Atlas
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.p1tan.atlas.share
+        SWIFT_VERSION: 5.0
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+        SKIP_INSTALL: YES
   AtlasUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -46,6 +78,7 @@ schemes:
     build:
       targets:
         Atlas: all
+        AtlasShareExtension: all
         AtlasUITests: [test]
     run:
       config: Debug
