@@ -26,6 +26,12 @@ struct ExtractRequest: Encodable {
     let timezone: String
 }
 
+struct GmailCandidate: Decodable {
+    let messageId: String
+    let subject: String
+    let events: [ExtractedEvent]
+}
+
 enum CalendarWriteStatus: Equatable {
     case notAdded
     case adding
@@ -56,8 +62,11 @@ struct DraftEvent: Identifiable {
     /// True when the backend couldn't resolve a start date at all, so the
     /// date field is prefilled with a guess the user must actually check.
     let dateNeedsAttention: Bool
+    /// The source email's subject, when this draft came from Gmail rather
+    /// than a paste/share -- nil in the paste/share case.
+    let sourceSubject: String?
 
-    init(from event: ExtractedEvent, fallbackStart: Date) {
+    init(from event: ExtractedEvent, fallbackStart: Date, sourceSubject: String? = nil) {
         title = event.title
         start = event.resolvedStart ?? fallbackStart
         hasEnd = event.resolvedEnd != nil
@@ -71,5 +80,6 @@ struct DraftEvent: Identifiable {
         confidence = event.confidence
         ambiguities = event.ambiguities
         dateNeedsAttention = event.resolvedStart == nil
+        self.sourceSubject = sourceSubject
     }
 }

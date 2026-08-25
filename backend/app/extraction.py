@@ -131,3 +131,11 @@ class OpenAIEventExtractor:
 
 def get_default_extractor() -> EventExtractor:
     return OpenAIEventExtractor()
+
+
+def get_extractor() -> EventExtractor:
+    """FastAPI dependency -- the one function every route depending on an
+    extractor should use, so dependency_overrides in tests actually take
+    effect everywhere rather than silently missing routes that redefined
+    their own copy of this function."""
+    return get_default_extractor()

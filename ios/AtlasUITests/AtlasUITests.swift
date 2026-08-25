@@ -58,6 +58,7 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 30))
 
         title.tap()
+        sleep(1) // let the keyboard-appearance layout shift settle before a long-press
         // Select-all then type, since the field already has extracted text in it.
         title.press(forDuration: 1.0)
         if app.menuItems["Select All"].waitForExistence(timeout: 2) {
@@ -115,6 +116,18 @@ final class AtlasUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter().wait(for: [expectation], timeout: 10), .completed)
         XCTAssertFalse(addButton.isEnabled)
         XCTAssertFalse(app.staticTexts["AddToCalendarError"].exists)
+    }
+
+    /// Assumes Gmail is already connected on this machine (real OAuth
+    /// completed in Increment 3.1) -- doesn't tap the button, since that
+    /// would fetch real unread mail. Doesn't cover the disconnected state,
+    /// since forcing a disconnect here would blow away a real, working
+    /// credential just for a UI assertion.
+    func testCheckGmailButtonAppearsWhenGmailIsConnected() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        XCTAssertTrue(app.buttons["CheckGmailButton"].waitForExistence(timeout: 10))
     }
 
     private func extract(_ app: XCUIApplication, text: String) {

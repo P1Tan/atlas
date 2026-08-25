@@ -1,10 +1,12 @@
 import SwiftUI
+import UIKit
 
 struct PasteInputView: View {
     @State private var emailText: String = ""
     @StateObject private var viewModel = ExtractionViewModel()
     @State private var calendarWriter = CalendarWriter()
     @EnvironmentObject private var shareInbox: ShareInbox
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -37,6 +39,8 @@ struct PasteInputView: View {
             )
             .accessibilityIdentifier("ExtractButton")
 
+            gmailSection
+
             if let errorMessage = viewModel.errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
@@ -54,6 +58,39 @@ struct PasteInputView: View {
             emailText = text
             shareInbox.pendingText = nil
             Task { await viewModel.extract(text: text) }
+        }
+        .task {
+            await viewModel.refreshGmailStatus()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            Task { await viewModel.refreshGmailStatus() }
+        }
+    }
+
+    @ViewBuilder
+    private var gmailSection: some View {
+        if viewModel.gmailConnected {
+            Button {
+                Task { await viewModel.checkGmail() }
+            } label: {
+                Text("Check Gmail (unread)")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(viewModel.isLoading)
+            .accessibilityIdentifier("CheckGmailButton")
+        } else {
+            Button {
+                if let url = URL(string: "http://127.0.0.1:8000/auth/google/login") {
+                    UIApplication.shared.open(url)
+                }
+            } label: {
+                Text("Connect Gmail")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("ConnectGmailButton")
         }
     }
 
@@ -91,6 +128,13 @@ private struct EditableEventRow: View {
                     .accessibilityIdentifier("EventTitle")
                 Spacer()
                 ConfidenceBadge(confidence: event.confidence)
+            }
+
+            if let subject = event.sourceSubject {
+                Label("Gmail: \(subject)", systemImage: "envelope")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("EventSourceSubject")
             }
 
             dateSection

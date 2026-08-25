@@ -7,3 +7,4 @@ python-dotenv>=1.0,<2.0
 python-dateutil>=2.9,<3.0
 google-auth>=2.30,<3.0
 google-auth-oauthlib>=1.2,<2.0
+google-api-python-client>=2.140,<3.0
