@@ -3,6 +3,7 @@ import logging
 from fastapi import Depends, FastAPI, HTTPException
 
 from app.ambiguity import finalize_confidence_and_ambiguities
+from app.auth_routes import router as auth_router
 from app.date_resolution import resolve_date_phrase
 from app.extraction import EventExtractor, ExtractedEventDraft, get_default_extractor
 from app.models import Event, ExtractRequest
@@ -10,6 +11,7 @@ from app.models import Event, ExtractRequest
 logger = logging.getLogger("atlas.api")
 
 app = FastAPI(title="Atlas backend")
+app.include_router(auth_router)
 
 
 @app.get("/health")
