@@ -1,6 +1,8 @@
 import base64
+from unittest.mock import MagicMock, patch
 
-from app.gmail_client import _find_body_text, _header, _strip_html
+from app import gmail_client
+from app.gmail_client import _find_body_text, _header, _strip_html, fetch_recent_unread_messages
 
 
 def _b64(text: str) -> str:
@@ -66,3 +68,20 @@ def test_find_body_text_recurses_into_nested_multipart() -> None:
 def test_find_body_text_returns_empty_string_when_nothing_usable() -> None:
     payload = {"mimeType": "application/pdf", "body": {}}
     assert _find_body_text(payload) == ""
+
+
+def test_fetch_query_is_scoped_to_unread_and_recent(monkeypatch) -> None:
+    monkeypatch.setattr(gmail_client, "GMAIL_LOOKBACK_DAYS", 30)
+
+    fake_service = MagicMock()
+    fake_service.users.return_value.messages.return_value.list.return_value.execute.return_value = {
+        "messages": []
+    }
+
+    with patch.object(gmail_client, "build", return_value=fake_service) as mock_build:
+        fetch_recent_unread_messages(credentials=MagicMock(), max_results=5)
+
+    mock_build.assert_called_once()
+    list_call_kwargs = fake_service.users.return_value.messages.return_value.list.call_args.kwargs
+    assert list_call_kwargs["q"] == "is:unread newer_than:30d"
+    assert list_call_kwargs["maxResults"] == 5

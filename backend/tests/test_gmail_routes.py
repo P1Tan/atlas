@@ -144,3 +144,39 @@ def test_max_results_is_capped_by_query_validation() -> None:
     query["max_results"] = 999
     response = client.get("/gmail/candidates", params=query)
     assert response.status_code == 422
+
+
+def test_candidate_response_never_includes_full_message_body(monkeypatch) -> None:
+    """Excerpt-only retention guardrail: the API contract itself must not
+    have a field a future change could accidentally populate with a full
+    email body -- only message_id, subject, and the already-excerpted
+    events are allowed."""
+    fake_credentials = MagicMock(expired=False)
+    monkeypatch.setattr(gmail_routes, "load_credentials", lambda: fake_credentials)
+    monkeypatch.setattr(
+        gmail_routes,
+        "fetch_recent_unread_messages",
+        lambda credentials, max_results: [
+            GmailMessage(id="msg-1", subject="Lunch?", body_text="Lunch next Tuesday at noon.")
+        ],
+    )
+    app.dependency_overrides[get_extractor] = lambda: FakeExtractor(
+        {
+            "Lunch next Tuesday at noon.": [
+                ExtractedEventDraft(
+                    title="Lunch",
+                    date_phrase="next Tuesday at noon",
+                    source_excerpt="Lunch next Tuesday at noon.",
+                    confidence="high",
+                )
+            ]
+        }
+    )
+
+    response = client.get("/gmail/candidates", params=_query())
+    assert response.status_code == 200
+
+    candidate = response.json()[0]
+    assert set(candidate.keys()) == {"message_id", "subject", "events"}
+    assert "body_text" not in candidate
+    assert "body" not in candidate

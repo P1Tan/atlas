@@ -7,52 +7,56 @@ struct PasteInputView: View {
     @State private var calendarWriter = CalendarWriter()
     @EnvironmentObject private var shareInbox: ShareInbox
     @Environment(\.scenePhase) private var scenePhase
+    @State private var showingGmailConsent = false
+    @FocusState private var isEmailTextFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Paste an email or message")
-                .font(.headline)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Paste an email or message")
+                    .font(.headline)
 
-            TextEditor(text: $emailText)
-                .frame(minHeight: 140, maxHeight: 220)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.secondary.opacity(0.3))
-                )
-                .accessibilityIdentifier("EmailTextEditor")
+                TextEditor(text: $emailText)
+                    .frame(minHeight: 140, maxHeight: 220)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.secondary.opacity(0.3))
+                    )
+                    .focused($isEmailTextFocused)
+                    .accessibilityIdentifier("EmailTextEditor")
 
-            Button {
-                Task { await viewModel.extract(text: emailText) }
-            } label: {
-                if viewModel.isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                } else {
-                    Text("Extract Events")
-                        .frame(maxWidth: .infinity)
+                Button {
+                    isEmailTextFocused = false
+                    Task { await viewModel.extract(text: emailText) }
+                } label: {
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Text("Extract Events")
+                            .frame(maxWidth: .infinity)
+                    }
                 }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    emailText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || viewModel.isLoading
+                )
+                .accessibilityIdentifier("ExtractButton")
+
+                gmailSection
+
+                if let errorMessage = viewModel.errorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .font(.footnote)
+                        .accessibilityIdentifier("ExtractErrorMessage")
+                }
+
+                resultsSection
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(
-                emailText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || viewModel.isLoading
-            )
-            .accessibilityIdentifier("ExtractButton")
-
-            gmailSection
-
-            if let errorMessage = viewModel.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
-                    .font(.footnote)
-                    .accessibilityIdentifier("ExtractErrorMessage")
-            }
-
-            resultsSection
-
-            Spacer()
+            .padding()
         }
-        .padding()
         .onChange(of: shareInbox.pendingText) { _, newValue in
             guard let text = newValue else { return }
             emailText = text
@@ -66,25 +70,40 @@ struct PasteInputView: View {
             guard newPhase == .active else { return }
             Task { await viewModel.refreshGmailStatus() }
         }
+        .alert("Connect Gmail?", isPresented: $showingGmailConsent) {
+            Button("Cancel", role: .cancel) {}
+            Button("Continue to Google Sign-In") {
+                if let url = URL(string: "http://127.0.0.1:8000/auth/google/login") {
+                    UIApplication.shared.open(url)
+                }
+            }
+        } message: {
+            Text("Atlas will check your recent (last 30 days) unread email for events. Only short excerpts are sent to the AI model and shown to you for review — full email bodies are never stored or logged.")
+        }
     }
 
     @ViewBuilder
     private var gmailSection: some View {
         if viewModel.gmailConnected {
-            Button {
-                Task { await viewModel.checkGmail() }
-            } label: {
-                Text("Check Gmail (unread)")
-                    .frame(maxWidth: .infinity)
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    isEmailTextFocused = false
+                    Task { await viewModel.checkGmail() }
+                } label: {
+                    Text("Check Gmail (unread)")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.isLoading)
+                .accessibilityIdentifier("CheckGmailButton")
+
+                Text("Only recent (last 30 days), unread mail is checked. Full email bodies are never stored.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.bordered)
-            .disabled(viewModel.isLoading)
-            .accessibilityIdentifier("CheckGmailButton")
         } else {
             Button {
-                if let url = URL(string: "http://127.0.0.1:8000/auth/google/login") {
-                    UIApplication.shared.open(url)
-                }
+                showingGmailConsent = true
             } label: {
                 Text("Connect Gmail")
                     .frame(maxWidth: .infinity)
@@ -101,12 +120,15 @@ struct PasteInputView: View {
                 .font(.headline)
                 .padding(.top, 8)
 
-            List {
+            // A plain VStack, not a List -- List's own scrolling/sizing
+            // fights with the outer ScrollView (this previously collapsed
+            // to zero height when the keyboard reduced available space).
+            LazyVStack(alignment: .leading, spacing: 12) {
                 ForEach($viewModel.draftEvents) { $event in
                     EditableEventRow(event: $event, calendarWriter: calendarWriter)
+                    Divider()
                 }
             }
-            .listStyle(.plain)
             .accessibilityIdentifier("EventList")
         } else if viewModel.hasSearched && !viewModel.isLoading {
             Text("No events found.")

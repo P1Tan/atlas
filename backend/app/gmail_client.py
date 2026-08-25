@@ -6,6 +6,8 @@ from typing import List, Optional
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+from app.config import GMAIL_LOOKBACK_DAYS
+
 # Guard against a pathologically large message bloating the LLM call.
 MAX_BODY_CHARS = 20_000
 
@@ -75,13 +77,15 @@ def _header(headers: List[dict], name: str) -> Optional[str]:
 
 
 def fetch_recent_unread_messages(credentials: Credentials, max_results: int) -> List[GmailMessage]:
+    """Recent AND unread, per the email-privacy invariant -- unread mail from
+    years ago is not "recent" just because it's unread. The lookback window
+    is a server-enforced policy (app/config.py), not something a caller can
+    widen via this function's arguments."""
     service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
 
+    query = f"is:unread newer_than:{GMAIL_LOOKBACK_DAYS}d"
     list_response = (
-        service.users()
-        .messages()
-        .list(userId="me", q="is:unread", maxResults=max_results)
-        .execute()
+        service.users().messages().list(userId="me", q=query, maxResults=max_results).execute()
     )
     stubs = list_response.get("messages", [])
 
