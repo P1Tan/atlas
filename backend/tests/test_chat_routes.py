@@ -1,0 +1,88 @@
+from fastapi.testclient import TestClient
+
+from app.chat import SYSTEM_PROMPT, ChatMessage, get_chat_engine
+from app.main import app
+
+client = TestClient(app)
+
+
+class FakeChatEngine:
+    model_name = "fake-chat-engine"
+
+    def __init__(self, response_messages=None, raise_error: bool = False) -> None:
+        self._response_messages = response_messages or [ChatMessage(role="assistant", content="hi")]
+        self._raise_error = raise_error
+        self.received_messages = None
+
+    def run_turn(self, messages, tools):
+        self.received_messages = messages
+        if self._raise_error:
+            raise RuntimeError("boom")
+        return self._response_messages
+
+
+def teardown_function() -> None:
+    app.dependency_overrides.clear()
+
+
+def _request(messages: list[ChatMessage]) -> dict:
+    return {
+        "messages": [m.model_dump(exclude_none=True) for m in messages],
+        "reference_datetime": "2026-08-26T12:00:00",
+        "timezone": "America/New_York",
+    }
+
+
+def test_chat_requires_last_message_to_be_from_user() -> None:
+    app.dependency_overrides[get_chat_engine] = lambda: FakeChatEngine()
+
+    response = client.post("/chat", json=_request([ChatMessage(role="assistant", content="hi")]))
+
+    assert response.status_code == 422
+
+
+def test_chat_prepends_system_prompt_when_missing() -> None:
+    fake_engine = FakeChatEngine()
+    app.dependency_overrides[get_chat_engine] = lambda: fake_engine
+
+    response = client.post("/chat", json=_request([ChatMessage(role="user", content="hello")]))
+
+    assert response.status_code == 200
+    assert fake_engine.received_messages[0].role == "system"
+    assert fake_engine.received_messages[0].content == SYSTEM_PROMPT
+    assert fake_engine.received_messages[-1].content == "hello"
+
+
+def test_chat_does_not_duplicate_an_existing_system_prompt() -> None:
+    fake_engine = FakeChatEngine()
+    app.dependency_overrides[get_chat_engine] = lambda: fake_engine
+    messages = [
+        ChatMessage(role="system", content="custom system prompt"),
+        ChatMessage(role="user", content="hello"),
+    ]
+
+    response = client.post("/chat", json=_request(messages))
+
+    assert response.status_code == 200
+    assert len([m for m in fake_engine.received_messages if m.role == "system"]) == 1
+    assert fake_engine.received_messages[0].content == "custom system prompt"
+
+
+def test_chat_returns_new_messages_from_the_engine() -> None:
+    reply = [ChatMessage(role="assistant", content="Hello! How can I help?")]
+    app.dependency_overrides[get_chat_engine] = lambda: FakeChatEngine(response_messages=reply)
+
+    response = client.post("/chat", json=_request([ChatMessage(role="user", content="hi")]))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["new_messages"]) == 1
+    assert data["new_messages"][0]["content"] == "Hello! How can I help?"
+
+
+def test_chat_returns_502_when_engine_fails() -> None:
+    app.dependency_overrides[get_chat_engine] = lambda: FakeChatEngine(raise_error=True)
+
+    response = client.post("/chat", json=_request([ChatMessage(role="user", content="hi")]))
+
+    assert response.status_code == 502

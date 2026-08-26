@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 EXTRACTION_MODEL = os.getenv("ATLAS_EXTRACTION_MODEL", "gpt-5-mini")
+CHAT_MODEL = os.getenv("ATLAS_CHAT_MODEL", "gpt-5-mini")
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
