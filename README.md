@@ -6,7 +6,7 @@ A personal assistant, starting with a text-first email-to-calendar tool. See [`a
 
 Phase 0 (text-first email-to-calendar) is complete: `/extract` does LLM-based event extraction with deterministic date resolution and ambiguity flagging; live Gmail (read-only OAuth) feeds the same pipeline; iOS lets you paste, share from Mail, or pull from Gmail, review/edit proposed events, and confirm to write them to the calendar via EventKit.
 
-Phase 1 (MVP) is underway. `/chat` is a general multi-turn, tool-calling conversation endpoint (the LLM can invoke backend tools mid-conversation) — currently has zero product tools registered while the chat UI and tool migration are still in progress; conversation-only replies work end to end today.
+Phase 1 (MVP) is underway. `/chat` is a general multi-turn, tool-calling conversation endpoint, now with its first real tool: the model can call `extract_calendar_events` on any pasted text mid-conversation, running the same extraction/date-resolution/ambiguity pipeline `/extract` uses. iOS's Chat tab is the primary screen; the dedicated Email tab (paste/share/Gmail, with the full review-and-confirm UI) still exists separately for now.
 
 ## Repo layout
 

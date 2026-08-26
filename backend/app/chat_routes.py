@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.chat import ChatEngine, ChatMessage, SYSTEM_PROMPT, get_chat_engine
-from app.tools import REGISTERED_TOOLS
+from app.extraction import EventExtractor, get_extractor
+from app.tools import build_tools
 
 logger = logging.getLogger("atlas.chat")
 
@@ -23,7 +24,11 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/chat")
-def chat(request: ChatRequest, engine: ChatEngine = Depends(get_chat_engine)) -> ChatResponse:
+def chat(
+    request: ChatRequest,
+    engine: ChatEngine = Depends(get_chat_engine),
+    extractor: EventExtractor = Depends(get_extractor),
+) -> ChatResponse:
     if not request.messages or request.messages[-1].role != "user":
         raise HTTPException(status_code=422, detail="last message must be from the user")
 
@@ -31,8 +36,10 @@ def chat(request: ChatRequest, engine: ChatEngine = Depends(get_chat_engine)) ->
     if messages[0].role != "system":
         messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)] + messages
 
+    tools = build_tools(request.reference_datetime, request.timezone, extractor)
+
     try:
-        new_messages = engine.run_turn(messages, tools=REGISTERED_TOOLS)
+        new_messages = engine.run_turn(messages, tools=tools)
     except Exception:
         logger.exception("chat turn failed model=%s", engine.model_name)
         raise HTTPException(status_code=502, detail="chat failed")
