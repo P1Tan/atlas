@@ -11,6 +11,7 @@ final class AtlasUITests: XCTestCase {
     func testExtractButtonDisabledUntilTextEntered() throws {
         let app = XCUIApplication()
         app.launch()
+        app.tabBars.buttons["Email"].tap()
 
         let textEditor = app.textViews["EmailTextEditor"]
         XCTAssertTrue(textEditor.waitForExistence(timeout: 5))
@@ -126,11 +127,13 @@ final class AtlasUITests: XCTestCase {
     func testCheckGmailButtonAppearsWhenGmailIsConnected() throws {
         let app = XCUIApplication()
         app.launch()
+        app.tabBars.buttons["Email"].tap()
 
         XCTAssertTrue(app.buttons["CheckGmailButton"].waitForExistence(timeout: 10))
     }
 
     private func extract(_ app: XCUIApplication, text: String) {
+        app.tabBars.buttons["Email"].tap()
         let textEditor = app.textViews["EmailTextEditor"]
         XCTAssertTrue(textEditor.waitForExistence(timeout: 5))
         textEditor.tap()

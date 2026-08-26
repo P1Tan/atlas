@@ -58,12 +58,14 @@ struct PasteInputView: View {
             .padding()
         }
         .onChange(of: shareInbox.pendingText) { _, newValue in
-            guard let text = newValue else { return }
-            emailText = text
-            shareInbox.pendingText = nil
-            Task { await viewModel.extract(text: text) }
+            consumePendingShareText(newValue)
         }
         .task {
+            // Hosting this view inside a TabView means it isn't always
+            // mounted at the moment a share hand-off arrives -- onChange
+            // alone would miss a value that was already set before this
+            // view appeared, so also check on appear.
+            consumePendingShareText(shareInbox.pendingText)
             await viewModel.refreshGmailStatus()
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -80,6 +82,13 @@ struct PasteInputView: View {
         } message: {
             Text("Atlas will check your recent (last 30 days) unread email for events. Only short excerpts are sent to the AI model and shown to you for review — full email bodies are never stored or logged.")
         }
+    }
+
+    private func consumePendingShareText(_ text: String?) {
+        guard let text else { return }
+        emailText = text
+        shareInbox.pendingText = nil
+        Task { await viewModel.extract(text: text) }
     }
 
     @ViewBuilder
