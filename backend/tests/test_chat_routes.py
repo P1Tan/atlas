@@ -104,15 +104,15 @@ def test_chat_returns_502_when_engine_fails() -> None:
     assert response.status_code == 502
 
 
-def test_chat_wires_up_the_email_to_calendar_tool() -> None:
+def test_chat_wires_up_the_registered_tools() -> None:
     fake_engine = FakeChatEngine()
     app.dependency_overrides[get_chat_engine] = lambda: fake_engine
 
     response = client.post("/chat", json=_request([ChatMessage(role="user", content="hi")]))
 
     assert response.status_code == 200
-    tool_names = [tool.name for tool in fake_engine.received_tools]
-    assert tool_names == ["extract_calendar_events"]
+    tool_names = {tool.name for tool in fake_engine.received_tools}
+    assert tool_names == {"extract_calendar_events", "set_reminder"}
 
 
 def test_email_to_calendar_tool_is_actually_callable_end_to_end() -> None:

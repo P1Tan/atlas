@@ -6,7 +6,7 @@ A personal assistant, starting with a text-first email-to-calendar tool. See [`a
 
 Phase 0 (text-first email-to-calendar) is complete: `/extract` does LLM-based event extraction with deterministic date resolution and ambiguity flagging; live Gmail (read-only OAuth) feeds the same pipeline; iOS lets you paste, share from Mail, or pull from Gmail, review/edit proposed events, and confirm to write them to the calendar via EventKit.
 
-Phase 1 (MVP) is underway. `/chat` is a general multi-turn, tool-calling conversation endpoint with a configurable persona (`ATLAS_PERSONA` env var, see `.env.example`) and its first real tool: the model can call `extract_calendar_events` on any pasted text mid-conversation, running the same extraction/date-resolution/ambiguity pipeline `/extract` uses. iOS's Chat tab is the primary screen; the dedicated Email tab (paste/share/Gmail, with the full review-and-confirm UI) still exists separately for now. Milestone 4 (chat core & persona) is complete.
+Phase 1 (MVP) is underway. `/chat` is a general multi-turn, tool-calling conversation endpoint with a configurable persona (`ATLAS_PERSONA` env var, see `.env.example`) and two real tools: `extract_calendar_events` (proposes events from pasted text, same pipeline `/extract` uses) and `set_reminder` (schedules a real on-device local notification via iOS's `ReminderScheduler`, given a title and natural-language time). Milestone 4 (chat core & persona) is complete; Milestone 5 (remaining MVP tools) is underway.
 
 ## Repo layout
 

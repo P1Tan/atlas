@@ -12,10 +12,12 @@
 		25519BEB845DB754928D2E88 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A789C9796DC03236367E46C /* ChatView.swift */; };
 		36AAB9E1F9848970EF9BEFA3 /* AtlasShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4EF2CFB412C174085D2FC25B /* AtlasShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		3BFF9F643D1162FCDAD5E557 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA748FA518458563D7059A21 /* ContentView.swift */; };
+		5FFDB9502D61D02DF312BFB4 /* ReminderScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD2B46260505F4E439640BC3 /* ReminderScheduler.swift */; };
 		6483B9FC829AA4219F2E6E15 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D77CF17C36D83ADD21FD8A52 /* ChatModels.swift */; };
 		861E5AE1973762D7590E4FEF /* ShareExtensionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2516FB3E77C2AF5C01EE9204 /* ShareExtensionView.swift */; };
 		898743BBB9B292EBE47E0478 /* AtlasUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8DF13257DDCAA13F34C37FA /* AtlasUITests.swift */; };
 		97F64F47C99747F2D425C52B /* AtlasApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B039968FC134F8A1AC6E2337 /* AtlasApp.swift */; };
+		9C3276BB79A969CBD57981EB /* NotificationPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8DE4C3096647AE59D2F733 /* NotificationPresenter.swift */; };
 		B95350E1FFFDCD6C58B90F60 /* CalendarWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75745AACE7497EB99A6E904F /* CalendarWriter.swift */; };
 		CD7CBBAEC16045AB0E3D1C05 /* ExtractionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0F3BCCDEA6B5102950E50B /* ExtractionViewModel.swift */; };
 		D194A18372CE9E0BDD2525D1 /* HealthChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C8B66E4E4959258732F50C2 /* HealthChecker.swift */; };
@@ -59,6 +61,7 @@
 /* Begin PBXFileReference section */
 		2516FB3E77C2AF5C01EE9204 /* ShareExtensionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareExtensionView.swift; sourceTree = "<group>"; };
 		27F1CCC6F07DC94BF9D6C509 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		2E8DE4C3096647AE59D2F733 /* NotificationPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPresenter.swift; sourceTree = "<group>"; };
 		413A56C9FFE04C7BBD65B964 /* Atlas.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Atlas.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		42E1753C7AB2C9DF733D0949 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		4A789C9796DC03236367E46C /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
@@ -73,6 +76,7 @@
 		A8DF13257DDCAA13F34C37FA /* AtlasUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtlasUITests.swift; sourceTree = "<group>"; };
 		AC100B21D569D37FFC658993 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		B039968FC134F8A1AC6E2337 /* AtlasApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtlasApp.swift; sourceTree = "<group>"; };
+		CD2B46260505F4E439640BC3 /* ReminderScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderScheduler.swift; sourceTree = "<group>"; };
 		D22F876F1DE9D1ABBCA827F0 /* AtlasUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AtlasUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D77CF17C36D83ADD21FD8A52 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
 		F9BF2B21B444A128C8CC7794 /* ChatUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatUITests.swift; sourceTree = "<group>"; };
@@ -102,7 +106,9 @@
 				8C8B66E4E4959258732F50C2 /* HealthChecker.swift */,
 				6DBB2D8DA3BA7AA013C6D346 /* Info.plist */,
 				27F1CCC6F07DC94BF9D6C509 /* Models.swift */,
+				2E8DE4C3096647AE59D2F733 /* NotificationPresenter.swift */,
 				6E6818C4CB4B99F23DE4A307 /* PasteInputView.swift */,
+				CD2B46260505F4E439640BC3 /* ReminderScheduler.swift */,
 				6D63D1C99DCE26354839E087 /* ShareInbox.swift */,
 			);
 			path = Atlas;
@@ -260,7 +266,9 @@
 				CD7CBBAEC16045AB0E3D1C05 /* ExtractionViewModel.swift in Sources */,
 				D194A18372CE9E0BDD2525D1 /* HealthChecker.swift in Sources */,
 				E53365C9F66B94B13A2FD9B2 /* Models.swift in Sources */,
+				9C3276BB79A969CBD57981EB /* NotificationPresenter.swift in Sources */,
 				EC951CE1C805C1E4F64718AC /* PasteInputView.swift in Sources */,
+				5FFDB9502D61D02DF312BFB4 /* ReminderScheduler.swift in Sources */,
 				00359FB9E9DE941EF156F139 /* ShareInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
