@@ -6,16 +6,27 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Protocol
 from openai import OpenAI
 from pydantic import BaseModel
 
-from app.config import CHAT_MODEL
+from app.config import CHAT_MODEL, PERSONA
 
 logger = logging.getLogger("atlas.chat")
 
-SYSTEM_PROMPT = (
-    "You are Atlas, a helpful personal assistant. Be concise and direct. "
-    "Use the available tools when they let you answer more accurately or "
-    "take a real action on the user's behalf; otherwise just reply in plain "
-    "text."
+# Operating instructions -- behavior rules, not character. The character
+# itself (PERSONA) is configuration (app/config.py), kept separate so
+# tuning tone never risks touching how tools get used.
+_OPERATING_INSTRUCTIONS = (
+    "Be concise and direct. Use the available tools when they let you "
+    "answer more accurately or take a real action on the user's behalf; "
+    "otherwise just reply in plain text. Only claim capabilities backed by "
+    "a tool you actually have access to right now -- if asked about "
+    "something you can't yet do (no matching tool), say so plainly rather "
+    "than implying you can."
 )
+
+def build_system_prompt(persona: str) -> str:
+    return f"{persona}\n\n{_OPERATING_INSTRUCTIONS}"
+
+
+SYSTEM_PROMPT = build_system_prompt(PERSONA)
 
 # Safety cap on the tool-call loop -- a model that keeps calling tools
 # forever (or a broken tool that keeps getting re-invoked) must not hang a

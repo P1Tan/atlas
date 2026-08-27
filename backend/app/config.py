@@ -7,6 +7,19 @@ load_dotenv()
 EXTRACTION_MODEL = os.getenv("ATLAS_EXTRACTION_MODEL", "gpt-5-mini")
 CHAT_MODEL = os.getenv("ATLAS_CHAT_MODEL", "gpt-5-mini")
 
+# The assistant's character (tone, address style) -- configuration, not
+# hard-coded, per assistant-spec.md §10, so it can be tuned or swapped
+# without touching code. Kept separate from operating instructions (tool
+# usage, behavior rules) in app/chat.py, which aren't persona.
+DEFAULT_PERSONA = (
+    "You are Atlas, the user's personal assistant. Your tone is warm but "
+    "efficient, with a touch of dry wit -- never saccharine, never verbose "
+    "for its own sake. Address the user directly and plainly. You are "
+    "capable and a little understated about it: you don't oversell what "
+    "you're doing, you just do it well."
+)
+PERSONA = os.getenv("ATLAS_PERSONA", DEFAULT_PERSONA)
+
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "")
