@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from app.chat import ToolDefinition
 from app.extraction import ExtractedEventDraft
 from app.tools import build_tools
+from app.weather import WeatherResult
 
 
 class FakeExtractor:
@@ -16,10 +17,27 @@ class FakeExtractor:
         return self._drafts
 
 
-def test_build_tools_returns_the_email_to_calendar_tool() -> None:
-    tools = build_tools(datetime(2026, 8, 26, 12, 0), "America/New_York", FakeExtractor([]))
+class FakeWeatherClient:
+    def __init__(self, result: Optional[WeatherResult] = None) -> None:
+        self._result = result
 
-    assert len(tools) == 2
+    def get_weather(self, location: str) -> Optional[WeatherResult]:
+        return self._result
+
+
+def _build_tools(extractor=None, weather_client=None) -> List[ToolDefinition]:
+    return build_tools(
+        datetime(2026, 8, 26, 12, 0),
+        "America/New_York",
+        extractor or FakeExtractor([]),
+        weather_client or FakeWeatherClient(),
+    )
+
+
+def test_build_tools_returns_the_email_to_calendar_tool() -> None:
+    tools = _build_tools()
+
+    assert len(tools) == 3
     tool = tools[0]
     assert tool.name == "extract_calendar_events"
     schema = tool.to_openai_schema()
@@ -38,7 +56,7 @@ def test_tool_handler_runs_the_real_extraction_pipeline() -> None:
             )
         ]
     )
-    tools = build_tools(datetime(2026, 8, 26, 12, 0), "America/New_York", extractor)
+    tools = _build_tools(extractor=extractor)
     tool = tools[0]
 
     result = tool.handler({"text": "Lunch next Tuesday at noon."})
@@ -52,7 +70,7 @@ def test_tool_handler_runs_the_real_extraction_pipeline() -> None:
 
 
 def test_tool_handler_returns_empty_events_for_non_scheduling_text() -> None:
-    tools = build_tools(datetime(2026, 8, 26, 12, 0), "America/New_York", FakeExtractor([]))
+    tools = _build_tools()
 
     result = tools[0].handler({"text": "Thanks, sounds great!"})
 
@@ -60,7 +78,7 @@ def test_tool_handler_returns_empty_events_for_non_scheduling_text() -> None:
 
 
 def _set_reminder_tool() -> ToolDefinition:
-    tools = build_tools(datetime(2026, 8, 26, 12, 0), "America/New_York", FakeExtractor([]))
+    tools = _build_tools()
     tool = next(t for t in tools if t.name == "set_reminder")
     return tool
 

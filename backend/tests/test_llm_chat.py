@@ -42,6 +42,18 @@ class _FakeExtractor:
         ]
 
 
+class _FakeWeatherClient:
+    """These tests never exercise get_weather -- just satisfies build_tools'
+    required dependency."""
+
+    def get_weather(self, location: str):
+        return None
+
+
+def _build_tools() -> List:
+    return build_tools(datetime(2026, 8, 26, 12, 0), "America/New_York", _FakeExtractor(), _FakeWeatherClient())
+
+
 def test_holds_context_across_two_turns(engine) -> None:
     messages = [
         ChatMessage(role="system", content=SYSTEM_PROMPT),
@@ -71,7 +83,7 @@ def test_no_tools_available_still_replies_in_plain_text(engine) -> None:
 
 
 def test_model_calls_the_email_to_calendar_tool_when_appropriate(engine) -> None:
-    tools = build_tools(datetime(2026, 8, 26, 12, 0), "America/New_York", _FakeExtractor())
+    tools = _build_tools()
     messages = [
         ChatMessage(role="system", content=SYSTEM_PROMPT),
         ChatMessage(
@@ -92,7 +104,7 @@ def test_model_calls_the_email_to_calendar_tool_when_appropriate(engine) -> None
 
 
 def test_model_sets_a_reminder_with_a_specific_time(engine) -> None:
-    tools = build_tools(datetime(2026, 8, 26, 12, 0), "America/New_York", _FakeExtractor())
+    tools = _build_tools()
     messages = [
         ChatMessage(role="system", content=SYSTEM_PROMPT),
         ChatMessage(role="user", content="Remind me to call the dentist tomorrow at 10am."),
@@ -115,7 +127,7 @@ def test_model_asks_for_clarification_when_reminder_time_is_missing(engine) -> N
     """Never-guess invariant: a reminder with no specific clock time can't
     be resolved by set_reminder (it would otherwise silently fire at
     midnight), so the model should ask, not invent a time."""
-    tools = build_tools(datetime(2026, 8, 26, 12, 0), "America/New_York", _FakeExtractor())
+    tools = _build_tools()
     messages = [
         ChatMessage(role="system", content=SYSTEM_PROMPT),
         ChatMessage(role="user", content="Remind me to call the dentist tomorrow."),
@@ -135,7 +147,7 @@ def test_model_does_not_set_a_reminder_from_an_instruction_embedded_in_pasted_te
     not be triggered by an injected instruction hiding inside third-party
     text the user asked to have summarized -- only by the user's own direct,
     current-turn request."""
-    tools = build_tools(datetime(2026, 8, 26, 12, 0), "America/New_York", _FakeExtractor())
+    tools = _build_tools()
     messages = [
         ChatMessage(role="system", content=SYSTEM_PROMPT),
         ChatMessage(
