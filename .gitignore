@@ -31,4 +31,9 @@ xcuserdata/
 # Editors
 .vscode/
 .idea/
-.claude/
+# Claude Code local settings (machine-specific) -- but .claude/agents/ is
+# tracked on purpose: custom subagent definitions (code-reviewer,
+# security-reviewer) are project config, not local state, and gitignored
+# files don't reliably persist across sessions on this machine.
+.claude/*
+!.claude/agents
