@@ -28,3 +28,5 @@ GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "")
 # unread mail reaches. Deliberately not exposed as a /gmail/candidates query
 # param -- a caller can ask for fewer results, never a wider sweep.
 GMAIL_LOOKBACK_DAYS = int(os.getenv("ATLAS_GMAIL_LOOKBACK_DAYS", "30"))
+
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")

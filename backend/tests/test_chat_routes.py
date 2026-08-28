@@ -6,6 +6,7 @@ from app.chat import SYSTEM_PROMPT, ChatMessage, get_chat_engine
 from app.extraction import ExtractedEventDraft, get_extractor
 from app.main import app
 from app.weather import get_weather_client
+from app.web_search import SearchResponse, get_web_search_client
 
 client = TestClient(app)
 
@@ -20,6 +21,11 @@ class FakeExtractor:
 class FakeWeatherClient:
     def get_weather(self, location: str):
         return None
+
+
+class FakeWebSearchClient:
+    def search(self, query: str) -> SearchResponse:
+        return SearchResponse(query=query, answer=None, results=[])
 
 
 class FakeChatEngine:
@@ -42,6 +48,7 @@ class FakeChatEngine:
 def setup_function() -> None:
     app.dependency_overrides[get_extractor] = lambda: FakeExtractor()
     app.dependency_overrides[get_weather_client] = lambda: FakeWeatherClient()
+    app.dependency_overrides[get_web_search_client] = lambda: FakeWebSearchClient()
 
 
 def teardown_function() -> None:
@@ -119,7 +126,7 @@ def test_chat_wires_up_the_registered_tools() -> None:
 
     assert response.status_code == 200
     tool_names = {tool.name for tool in fake_engine.received_tools}
-    assert tool_names == {"extract_calendar_events", "set_reminder", "get_weather"}
+    assert tool_names == {"extract_calendar_events", "set_reminder", "get_weather", "web_search"}
 
 
 def test_email_to_calendar_tool_is_actually_callable_end_to_end() -> None:

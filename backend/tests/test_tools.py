@@ -5,6 +5,7 @@ from app.chat import ToolDefinition
 from app.extraction import ExtractedEventDraft
 from app.tools import build_tools
 from app.weather import WeatherResult
+from app.web_search import SearchResponse
 
 
 class FakeExtractor:
@@ -25,19 +26,28 @@ class FakeWeatherClient:
         return self._result
 
 
-def _build_tools(extractor=None, weather_client=None) -> List[ToolDefinition]:
+class FakeWebSearchClient:
+    def __init__(self, response: Optional[SearchResponse] = None) -> None:
+        self._response = response or SearchResponse(query="", answer=None, results=[])
+
+    def search(self, query: str) -> SearchResponse:
+        return self._response
+
+
+def _build_tools(extractor=None, weather_client=None, search_client=None) -> List[ToolDefinition]:
     return build_tools(
         datetime(2026, 8, 26, 12, 0),
         "America/New_York",
         extractor or FakeExtractor([]),
         weather_client or FakeWeatherClient(),
+        search_client or FakeWebSearchClient(),
     )
 
 
 def test_build_tools_returns_the_email_to_calendar_tool() -> None:
     tools = _build_tools()
 
-    assert len(tools) == 3
+    assert len(tools) == 4
     tool = tools[0]
     assert tool.name == "extract_calendar_events"
     schema = tool.to_openai_schema()

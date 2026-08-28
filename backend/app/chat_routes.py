@@ -8,6 +8,7 @@ from app.chat import ChatEngine, ChatMessage, SYSTEM_PROMPT, get_chat_engine
 from app.extraction import EventExtractor, get_extractor
 from app.tools import build_tools
 from app.weather import WeatherClient, get_weather_client
+from app.web_search import WebSearchClient, get_web_search_client
 
 logger = logging.getLogger("atlas.chat")
 
@@ -30,6 +31,7 @@ def chat(
     engine: ChatEngine = Depends(get_chat_engine),
     extractor: EventExtractor = Depends(get_extractor),
     weather_client: WeatherClient = Depends(get_weather_client),
+    search_client: WebSearchClient = Depends(get_web_search_client),
 ) -> ChatResponse:
     if not request.messages or request.messages[-1].role != "user":
         raise HTTPException(status_code=422, detail="last message must be from the user")
@@ -38,7 +40,7 @@ def chat(
     if messages[0].role != "system":
         messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)] + messages
 
-    tools = build_tools(request.reference_datetime, request.timezone, extractor, weather_client)
+    tools = build_tools(request.reference_datetime, request.timezone, extractor, weather_client, search_client)
 
     try:
         new_messages = engine.run_turn(messages, tools=tools)
