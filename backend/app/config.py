@@ -30,3 +30,8 @@ GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "")
 GMAIL_LOOKBACK_DAYS = int(os.getenv("ATLAS_GMAIL_LOOKBACK_DAYS", "30"))
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+# Bypasses Row Level Security -- backend-only, never sent to the iOS client.
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
