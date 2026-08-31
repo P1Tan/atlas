@@ -1,6 +1,14 @@
+from dataclasses import dataclass
 from typing import List, Protocol
 
 from app.supabase_client import get_supabase_client
+
+
+@dataclass
+class FactRecord:
+    id: str
+    fact_text: str
+    created_at: str
 
 
 class MemoryStore(Protocol):
@@ -20,6 +28,29 @@ class MemoryStore(Protocol):
         remember_fact already enforces. Raises on failure -- same
         no-expected-failure-case philosophy as remember_fact, a real DB
         error is the only failure mode."""
+        ...
+
+    def list_fact_records(self, user_id: str) -> List[FactRecord]:
+        """Return ALL of the user's facts with their ids, newest-first, for
+        a management UI. Deliberately has NO 200-cap unlike list_facts
+        (which is capped because it's injected into every chat turn's
+        context) -- a management UI needs to represent everything that
+        exists so the user can actually delete their way back under any
+        cap. Raises on failure, same philosophy as the other methods."""
+        ...
+
+    def delete_fact(self, user_id: str, fact_id: str) -> bool:
+        """Delete the fact with the given id, but ONLY if it belongs to
+        user_id -- this is the sole authorization check (the backend uses
+        the service_role client, which bypasses Row Level Security, so this
+        .eq("user_id", ...) filter is the only thing standing between a user
+        and someone else's data; the query must filter on BOTH id and
+        user_id, never id alone). Returns True if a row was actually
+        deleted, False if no matching row existed (either the id doesn't
+        exist, or it belongs to a different user -- both cases are
+        indistinguishable to the caller on purpose, so a 404 doesn't leak
+        whether the id exists under someone else's account). Raises on
+        failure (a real DB error), same philosophy as the other methods."""
         ...
 
 
@@ -45,6 +76,32 @@ class SupabaseMemoryStore:
         )
         rows = list(reversed(response.data))
         return [row["fact_text"] for row in rows]
+
+    def list_fact_records(self, user_id: str) -> List[FactRecord]:
+        response = (
+            get_supabase_client()
+            .table("user_facts")
+            .select("id, fact_text, created_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .order("id", desc=True)
+            .execute()
+        )
+        return [
+            FactRecord(id=row["id"], fact_text=row["fact_text"], created_at=row["created_at"])
+            for row in response.data
+        ]
+
+    def delete_fact(self, user_id: str, fact_id: str) -> bool:
+        response = (
+            get_supabase_client()
+            .table("user_facts")
+            .delete()
+            .eq("id", fact_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return len(response.data) > 0
 
 
 def get_default_memory_store() -> MemoryStore:

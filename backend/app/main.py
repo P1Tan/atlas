@@ -7,6 +7,7 @@ from app.chat_routes import router as chat_router
 from app.extraction import EventExtractor, get_extractor
 from app.extraction_pipeline import extract_events_from_text
 from app.gmail_routes import router as gmail_router
+from app.memory_routes import router as memory_router
 from app.models import Event, ExtractRequest
 
 # Without this, every logger.info() in the app (extraction/model logging,
@@ -21,6 +22,7 @@ app = FastAPI(title="Atlas backend")
 app.include_router(auth_router)
 app.include_router(gmail_router)
 app.include_router(chat_router)
+app.include_router(memory_router)
 
 
 @app.get("/health")
