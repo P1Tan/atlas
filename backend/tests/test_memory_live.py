@@ -9,6 +9,7 @@ user_facts.user_id foreign key against auth.users.
 
 import logging
 import os
+import time
 import uuid
 
 import pytest
@@ -59,6 +60,32 @@ def test_remember_fact_inserts_a_row_that_is_readable_back(throwaway_user_id) ->
         )
         rows = response.data
         assert any(row["fact_text"] == fact_text for row in rows)
+    finally:
+        try:
+            get_supabase_client().table("user_facts").delete().eq(
+                "user_id", throwaway_user_id
+            ).execute()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "failed to delete test fact rows for user %s -- may need manual cleanup",
+                throwaway_user_id,
+            )
+
+
+def test_list_facts_returns_inserted_facts_oldest_first(throwaway_user_id) -> None:
+    store = SupabaseMemoryStore()
+    fact_texts = ["fact one", "fact two", "fact three"]
+
+    for fact_text in fact_texts:
+        store.remember_fact(throwaway_user_id, fact_text)
+        # created_at ordering needs distinct timestamps -- a tiny sleep
+        # between inserts keeps this reliable rather than racing DB clock
+        # granularity.
+        time.sleep(0.05)
+
+    try:
+        facts = store.list_facts(throwaway_user_id)
+        assert facts == fact_texts
     finally:
         try:
             get_supabase_client().table("user_facts").delete().eq(

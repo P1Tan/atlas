@@ -4,7 +4,8 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.chat import ChatEngine, ChatMessage, SYSTEM_PROMPT, get_chat_engine
+from app.chat import ChatEngine, ChatMessage, build_system_prompt, get_chat_engine
+from app.config import PERSONA
 from app.extraction import EventExtractor, get_extractor
 from app.memory import MemoryStore, get_memory_store
 from app.supabase_client import AuthenticatedUser, get_current_user
@@ -42,7 +43,18 @@ def chat(
 
     messages = request.messages
     if messages[0].role != "system":
-        messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)] + messages
+        try:
+            facts = memory_store.list_facts(user.id)
+        except Exception:
+            # A transient memory-read failure should degrade the assistant
+            # to "no recalled facts this turn," not fail the entire chat
+            # request -- unlike remember_fact's write path (where a real DB
+            # error should surface, since nothing was silently lost either
+            # way), a read failure here has a safe, harmless fallback that's
+            # clearly better than a 500 for a whole chat turn.
+            logger.warning("failed to load remembered facts for chat context", exc_info=True)
+            facts = []
+        messages = [ChatMessage(role="system", content=build_system_prompt(PERSONA, facts))] + messages
 
     tools = build_tools(
         request.reference_datetime,

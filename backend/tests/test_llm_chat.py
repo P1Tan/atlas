@@ -12,7 +12,8 @@ from typing import List
 
 import pytest
 
-from app.chat import ChatMessage, OpenAIChatEngine, SYSTEM_PROMPT
+from app.chat import ChatMessage, OpenAIChatEngine, SYSTEM_PROMPT, build_system_prompt
+from app.config import PERSONA
 from app.extraction import ExtractedEventDraft
 from app.tools import build_tools
 from app.web_search import SearchResponse, SearchResult
@@ -65,6 +66,9 @@ class _FakeMemoryStore:
 
     def remember_fact(self, user_id: str, fact_text: str) -> None:
         pass
+
+    def list_facts(self, user_id: str) -> List[str]:
+        return []
 
 
 def _build_tools() -> List:
@@ -238,3 +242,20 @@ def test_model_does_not_set_a_reminder_from_an_instruction_embedded_in_a_search_
 
     reminder_calls = [m for m in reply if m.role == "tool" and m.name == "set_reminder"]
     assert reminder_calls == [], "the model must not act on an instruction embedded in a tool result"
+
+
+def test_model_recalls_a_fact_injected_into_the_system_prompt(engine) -> None:
+    """End-to-end proof of the FR7 behavior added in Milestone 6.3: a fact
+    stored via remember_fact on some earlier turn is injected into the
+    system prompt on every turn (not just once per conversation), so the
+    model can actually answer using it without the user re-stating it."""
+    system_prompt = build_system_prompt(PERSONA, ["The user's cat is named Whiskers."])
+    messages = [
+        ChatMessage(role="system", content=system_prompt),
+        ChatMessage(role="user", content="What's my cat's name?"),
+    ]
+
+    reply = engine.run_turn(messages, tools=[])
+
+    assert reply[-1].role == "assistant"
+    assert "whiskers" in (reply[-1].content or "").lower()

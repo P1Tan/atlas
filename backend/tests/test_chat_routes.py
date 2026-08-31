@@ -1,8 +1,9 @@
-from typing import List
+from typing import List, Optional
 
 from fastapi.testclient import TestClient
 
-from app.chat import SYSTEM_PROMPT, ChatMessage, get_chat_engine
+from app.chat import SYSTEM_PROMPT, ChatMessage, build_system_prompt, get_chat_engine
+from app.config import PERSONA
 from app.extraction import ExtractedEventDraft, get_extractor
 from app.main import app
 from app.memory import get_memory_store
@@ -31,8 +32,14 @@ class FakeWebSearchClient:
 
 
 class FakeMemoryStore:
+    def __init__(self, facts: Optional[List[str]] = None) -> None:
+        self._facts = facts or []
+
     def remember_fact(self, user_id: str, fact_text: str) -> None:
         pass
+
+    def list_facts(self, user_id: str) -> List[str]:
+        return self._facts
 
 
 class FakeChatEngine:
@@ -104,6 +111,39 @@ def test_chat_prepends_system_prompt_when_missing() -> None:
     assert fake_engine.received_messages[0].role == "system"
     assert fake_engine.received_messages[0].content == SYSTEM_PROMPT
     assert fake_engine.received_messages[-1].content == "hello"
+
+
+def test_chat_injects_remembered_facts_into_the_system_prompt() -> None:
+    fake_engine = FakeChatEngine()
+    app.dependency_overrides[get_chat_engine] = lambda: fake_engine
+    facts = ["The user's cat is named Whiskers.", "I'm vegetarian"]
+    app.dependency_overrides[get_memory_store] = lambda: FakeMemoryStore(facts=facts)
+
+    response = client.post("/chat", json=_request([ChatMessage(role="user", content="hello")]))
+
+    assert response.status_code == 200
+    system_content = fake_engine.received_messages[0].content
+    assert system_content == build_system_prompt(PERSONA, facts)
+    for fact in facts:
+        assert fact in system_content
+
+
+def test_chat_falls_back_to_no_facts_when_memory_store_read_fails() -> None:
+    class BrokenMemoryStore:
+        def remember_fact(self, user_id: str, fact_text: str) -> None:
+            pass
+
+        def list_facts(self, user_id: str) -> List[str]:
+            raise RuntimeError("db unreachable")
+
+    fake_engine = FakeChatEngine()
+    app.dependency_overrides[get_chat_engine] = lambda: fake_engine
+    app.dependency_overrides[get_memory_store] = lambda: BrokenMemoryStore()
+
+    response = client.post("/chat", json=_request([ChatMessage(role="user", content="hello")]))
+
+    assert response.status_code == 200
+    assert fake_engine.received_messages[0].content == SYSTEM_PROMPT
 
 
 def test_chat_does_not_duplicate_an_existing_system_prompt() -> None:
