@@ -34,20 +34,34 @@ class FakeWebSearchClient:
         return self._response
 
 
-def _build_tools(extractor=None, weather_client=None, search_client=None) -> List[ToolDefinition]:
+class FakeMemoryStore:
+    def __init__(self) -> None:
+        self.received_user_id = None
+        self.received_fact_text = None
+
+    def remember_fact(self, user_id: str, fact_text: str) -> None:
+        self.received_user_id = user_id
+        self.received_fact_text = fact_text
+
+
+def _build_tools(
+    extractor=None, weather_client=None, search_client=None, user_id="test-user-id", memory_store=None
+) -> List[ToolDefinition]:
     return build_tools(
         datetime(2026, 8, 26, 12, 0),
         "America/New_York",
         extractor or FakeExtractor([]),
         weather_client or FakeWeatherClient(),
         search_client or FakeWebSearchClient(),
+        user_id,
+        memory_store or FakeMemoryStore(),
     )
 
 
 def test_build_tools_returns_the_email_to_calendar_tool() -> None:
     tools = _build_tools()
 
-    assert len(tools) == 4
+    assert len(tools) == 5
     tool = tools[0]
     assert tool.name == "extract_calendar_events"
     schema = tool.to_openai_schema()

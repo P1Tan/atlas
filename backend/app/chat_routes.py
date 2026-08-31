@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.chat import ChatEngine, ChatMessage, SYSTEM_PROMPT, get_chat_engine
 from app.extraction import EventExtractor, get_extractor
+from app.memory import MemoryStore, get_memory_store
 from app.supabase_client import AuthenticatedUser, get_current_user
 from app.tools import build_tools
 from app.weather import WeatherClient, get_weather_client
@@ -34,6 +35,7 @@ def chat(
     extractor: EventExtractor = Depends(get_extractor),
     weather_client: WeatherClient = Depends(get_weather_client),
     search_client: WebSearchClient = Depends(get_web_search_client),
+    memory_store: MemoryStore = Depends(get_memory_store),
 ) -> ChatResponse:
     if not request.messages or request.messages[-1].role != "user":
         raise HTTPException(status_code=422, detail="last message must be from the user")
@@ -42,7 +44,15 @@ def chat(
     if messages[0].role != "system":
         messages = [ChatMessage(role="system", content=SYSTEM_PROMPT)] + messages
 
-    tools = build_tools(request.reference_datetime, request.timezone, extractor, weather_client, search_client)
+    tools = build_tools(
+        request.reference_datetime,
+        request.timezone,
+        extractor,
+        weather_client,
+        search_client,
+        user.id,
+        memory_store,
+    )
 
     try:
         new_messages = engine.run_turn(messages, tools=tools)

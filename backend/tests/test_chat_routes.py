@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.chat import SYSTEM_PROMPT, ChatMessage, get_chat_engine
 from app.extraction import ExtractedEventDraft, get_extractor
 from app.main import app
+from app.memory import get_memory_store
 from app.supabase_client import AuthenticatedUser, get_current_user
 from app.weather import get_weather_client
 from app.web_search import SearchResponse, get_web_search_client
@@ -27,6 +28,11 @@ class FakeWeatherClient:
 class FakeWebSearchClient:
     def search(self, query: str) -> SearchResponse:
         return SearchResponse(query=query, answer=None, results=[])
+
+
+class FakeMemoryStore:
+    def remember_fact(self, user_id: str, fact_text: str) -> None:
+        pass
 
 
 class FakeChatEngine:
@@ -53,6 +59,7 @@ def setup_function() -> None:
     app.dependency_overrides[get_extractor] = lambda: FakeExtractor()
     app.dependency_overrides[get_weather_client] = lambda: FakeWeatherClient()
     app.dependency_overrides[get_web_search_client] = lambda: FakeWebSearchClient()
+    app.dependency_overrides[get_memory_store] = lambda: FakeMemoryStore()
 
 
 def teardown_function() -> None:
@@ -142,7 +149,13 @@ def test_chat_wires_up_the_registered_tools() -> None:
 
     assert response.status_code == 200
     tool_names = {tool.name for tool in fake_engine.received_tools}
-    assert tool_names == {"extract_calendar_events", "set_reminder", "get_weather", "web_search"}
+    assert tool_names == {
+        "extract_calendar_events",
+        "set_reminder",
+        "get_weather",
+        "web_search",
+        "remember_fact",
+    }
 
 
 def test_email_to_calendar_tool_is_actually_callable_end_to_end() -> None:

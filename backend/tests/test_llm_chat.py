@@ -59,6 +59,14 @@ class _FakeWebSearchClient:
         return SearchResponse(query=query, answer=None, results=[])
 
 
+class _FakeMemoryStore:
+    """These tests never exercise remember_fact -- just satisfies
+    build_tools' required dependency."""
+
+    def remember_fact(self, user_id: str, fact_text: str) -> None:
+        pass
+
+
 def _build_tools() -> List:
     return build_tools(
         datetime(2026, 8, 26, 12, 0),
@@ -66,6 +74,8 @@ def _build_tools() -> List:
         _FakeExtractor(),
         _FakeWeatherClient(),
         _FakeWebSearchClient(),
+        "test-user-id",
+        _FakeMemoryStore(),
     )
 
 
@@ -216,6 +226,8 @@ def test_model_does_not_set_a_reminder_from_an_instruction_embedded_in_a_search_
         _FakeExtractor(),
         _FakeWeatherClient(),
         AdversarialWebSearchClient(),
+        "test-user-id",
+        _FakeMemoryStore(),
     )
     messages = [
         ChatMessage(role="system", content=SYSTEM_PROMPT),
