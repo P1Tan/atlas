@@ -67,7 +67,7 @@ class _FakeMemoryStore:
     def remember_fact(self, user_id: str, fact_text: str) -> None:
         pass
 
-    def list_facts(self, user_id: str) -> List[str]:
+    def search_facts(self, user_id: str, query_text: str, limit: int = 10) -> List[str]:
         return []
 
 

@@ -1,9 +1,10 @@
 """Exercises SupabaseMemoryStore against the real Supabase project end to end.
 
-Live calls against the real Supabase project (small/free, no cost) -- kept
-separate from the fast, deterministic tests in test_memory.py and skipped
-automatically when Supabase isn't configured. Mirrors the throwaway-user
-pattern in test_supabase_client_live.py so the inserted row satisfies the
+Live calls against the real Supabase project (small/free, no cost) and the
+real OpenAI embeddings API (small cost) -- kept separate from the fast,
+deterministic tests in test_memory.py and skipped automatically when
+Supabase/OpenAI aren't configured. Mirrors the throwaway-user pattern in
+test_supabase_client_live.py so the inserted row satisfies the
 user_facts.user_id foreign key against auth.users.
 """
 
@@ -14,13 +15,20 @@ import uuid
 
 import pytest
 
+from app.embeddings import get_default_embedding_client
 from app.memory import SupabaseMemoryStore
 from app.supabase_client import get_supabase_client
 
 pytestmark = pytest.mark.skipif(
-    not os.getenv("SUPABASE_URL") or not os.getenv("SUPABASE_SERVICE_ROLE_KEY"),
-    reason="SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set",
+    not os.getenv("SUPABASE_URL")
+    or not os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    or not os.getenv("OPENAI_API_KEY"),
+    reason="SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY/OPENAI_API_KEY not set",
 )
+
+
+def _store() -> SupabaseMemoryStore:
+    return SupabaseMemoryStore(embedding_client=get_default_embedding_client())
 
 
 @pytest.fixture
@@ -45,7 +53,7 @@ def throwaway_user_id():
 
 
 def test_remember_fact_inserts_a_row_that_is_readable_back(throwaway_user_id) -> None:
-    store = SupabaseMemoryStore()
+    store = _store()
     fact_text = "test fact from live test"
 
     store.remember_fact(throwaway_user_id, fact_text)
@@ -72,20 +80,21 @@ def test_remember_fact_inserts_a_row_that_is_readable_back(throwaway_user_id) ->
             )
 
 
-def test_list_facts_returns_inserted_facts_oldest_first(throwaway_user_id) -> None:
-    store = SupabaseMemoryStore()
-    fact_texts = ["fact one", "fact two", "fact three"]
-
-    for fact_text in fact_texts:
-        store.remember_fact(throwaway_user_id, fact_text)
-        # created_at ordering needs distinct timestamps -- a tiny sleep
-        # between inserts keeps this reliable rather than racing DB clock
-        # granularity.
-        time.sleep(0.05)
+def test_search_facts_finds_semantically_related_facts_by_paraphrase(throwaway_user_id) -> None:
+    """The actual proof that semantic search (not keyword match, not just
+    recency) is doing real work: query wording is deliberately different
+    from the stored fact's wording, and the store must still surface the
+    right one over clearly unrelated facts."""
+    store = _store()
 
     try:
-        facts = store.list_facts(throwaway_user_id)
-        assert facts == fact_texts
+        store.remember_fact(throwaway_user_id, "I live in Boston, Massachusetts.")
+        store.remember_fact(throwaway_user_id, "My favorite food is sushi.")
+        store.remember_fact(throwaway_user_id, "I work as a nurse.")
+
+        facts = store.search_facts(throwaway_user_id, "What city do I live in?", limit=1)
+
+        assert facts == ["I live in Boston, Massachusetts."]
     finally:
         try:
             get_supabase_client().table("user_facts").delete().eq(
@@ -99,7 +108,7 @@ def test_list_facts_returns_inserted_facts_oldest_first(throwaway_user_id) -> No
 
 
 def test_list_fact_records_returns_inserted_facts_newest_first_with_ids(throwaway_user_id) -> None:
-    store = SupabaseMemoryStore()
+    store = _store()
     fact_texts = ["fact one", "fact two", "fact three"]
 
     for fact_text in fact_texts:
@@ -127,7 +136,7 @@ def test_list_fact_records_returns_inserted_facts_newest_first_with_ids(throwawa
 
 
 def test_delete_fact_removes_the_row_and_returns_true(throwaway_user_id) -> None:
-    store = SupabaseMemoryStore()
+    store = _store()
     store.remember_fact(throwaway_user_id, "fact to delete")
 
     try:
@@ -164,7 +173,7 @@ def test_delete_fact_does_not_delete_when_user_id_does_not_match(throwaway_user_
     other_user_id = created.user.id
 
     try:
-        store = SupabaseMemoryStore()
+        store = _store()
         store.remember_fact(throwaway_user_id, "fact owned by throwaway_user_id")
 
         records = store.list_fact_records(throwaway_user_id)

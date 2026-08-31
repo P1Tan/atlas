@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Protocol
 
+from app.embeddings import EmbeddingClient, get_default_embedding_client
 from app.supabase_client import get_supabase_client
 
 
@@ -14,29 +15,32 @@ class FactRecord:
 class MemoryStore(Protocol):
     def remember_fact(self, user_id: str, fact_text: str) -> None:
         """Durably store a fact about the user for recall in future
-        conversations. Raises on failure -- unlike WeatherClient.get_weather
-        or WebSearchClient.search there is no expected-failure case here
-        (any non-empty fact text is valid to store), so a real DB error is
-        the only failure mode, left to propagate to the chat loop's existing
-        generic per-tool-call exception handling."""
+        conversations, and embed it for later semantic search. Raises on
+        failure -- unlike WeatherClient.get_weather or WebSearchClient.search
+        there is no expected-failure case here (any non-empty fact text is
+        valid to store), so a real DB or embedding-API error is the only
+        failure mode, left to propagate to the chat loop's existing generic
+        per-tool-call exception handling."""
         ...
 
-    def list_facts(self, user_id: str) -> List[str]:
-        """Return the user's remembered facts, oldest-first, capped at the
-        200 most recent -- a defensive bound so unbounded growth can't blow
-        up every future prompt, complementing the 500-char per-fact cap
-        remember_fact already enforces. Raises on failure -- same
-        no-expected-failure-case philosophy as remember_fact, a real DB
-        error is the only failure mode."""
+    def search_facts(self, user_id: str, query_text: str, limit: int = 10) -> List[str]:
+        """Embed query_text and return the `limit` most semantically similar
+        remembered facts for this user (by cosine distance), most-similar
+        first -- this is what makes recall work even when the user's
+        phrasing doesn't literally match the stored fact's wording. Unlike
+        the old list_facts this superseded, there's no separate document cap
+        to worry about -- limit IS the bound. Raises on failure, same
+        no-expected-failure-case philosophy as remember_fact, a real
+        embedding-API or DB error is the only failure mode."""
         ...
 
     def list_fact_records(self, user_id: str) -> List[FactRecord]:
         """Return ALL of the user's facts with their ids, newest-first, for
-        a management UI. Deliberately has NO 200-cap unlike list_facts
-        (which is capped because it's injected into every chat turn's
-        context) -- a management UI needs to represent everything that
-        exists so the user can actually delete their way back under any
-        cap. Raises on failure, same philosophy as the other methods."""
+        a management UI. Deliberately has NO cap unlike search_facts (which
+        is bounded because it's injected into a single chat turn's context)
+        -- a management UI needs to represent everything that exists so the
+        user can actually delete their way back under any cap. Raises on
+        failure, same philosophy as the other methods."""
         ...
 
     def delete_fact(self, user_id: str, fact_id: str) -> bool:
@@ -56,26 +60,31 @@ class MemoryStore(Protocol):
 
 class SupabaseMemoryStore:
     """Persists facts to the user_facts table via the service_role Supabase
-    client (see app.supabase_client.get_supabase_client)."""
+    client (see app.supabase_client.get_supabase_client), and uses
+    embedding_client to compute/query embeddings for semantic search --
+    encapsulated here so callers of remember_fact/search_facts don't need to
+    know embeddings exist at all."""
+
+    def __init__(self, embedding_client: EmbeddingClient) -> None:
+        self._embedding_client = embedding_client
 
     def remember_fact(self, user_id: str, fact_text: str) -> None:
+        embedding = self._embedding_client.embed(fact_text)
         get_supabase_client().table("user_facts").insert(
-            {"user_id": user_id, "fact_text": fact_text}
+            {"user_id": user_id, "fact_text": fact_text, "embedding": embedding}
         ).execute()
 
-    def list_facts(self, user_id: str) -> List[str]:
+    def search_facts(self, user_id: str, query_text: str, limit: int = 10) -> List[str]:
+        query_embedding = self._embedding_client.embed(query_text)
         response = (
             get_supabase_client()
-            .table("user_facts")
-            .select("fact_text")
-            .eq("user_id", user_id)
-            .order("created_at", desc=True)
-            .order("id", desc=True)
-            .limit(200)
+            .rpc(
+                "match_user_facts",
+                {"query_user_id": user_id, "query_embedding": query_embedding, "match_count": limit},
+            )
             .execute()
         )
-        rows = list(reversed(response.data))
-        return [row["fact_text"] for row in rows]
+        return [row["fact_text"] for row in response.data]
 
     def list_fact_records(self, user_id: str) -> List[FactRecord]:
         response = (
@@ -105,7 +114,7 @@ class SupabaseMemoryStore:
 
 
 def get_default_memory_store() -> MemoryStore:
-    return SupabaseMemoryStore()
+    return SupabaseMemoryStore(embedding_client=get_default_embedding_client())
 
 
 def get_memory_store() -> MemoryStore:

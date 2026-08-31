@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -43,17 +44,21 @@ def chat(
 
     messages = request.messages
     if messages[0].role != "system":
-        try:
-            facts = memory_store.list_facts(user.id)
-        except Exception:
-            # A transient memory-read failure should degrade the assistant
-            # to "no recalled facts this turn," not fail the entire chat
-            # request -- unlike remember_fact's write path (where a real DB
-            # error should surface, since nothing was silently lost either
-            # way), a read failure here has a safe, harmless fallback that's
-            # clearly better than a 500 for a whole chat turn.
-            logger.warning("failed to load remembered facts for chat context", exc_info=True)
-            facts = []
+        query_text = request.messages[-1].content
+        facts: List[str] = []
+        if query_text:
+            try:
+                facts = memory_store.search_facts(user.id, query_text, limit=10)
+            except Exception:
+                # A transient memory-read failure (now also covering an
+                # embedding-API failure) should degrade the assistant to "no
+                # recalled facts this turn," not fail the entire chat request
+                # -- unlike remember_fact's write path (where a real DB error
+                # should surface, since nothing was silently lost either
+                # way), a read failure here has a safe, harmless fallback
+                # that's clearly better than a 500 for a whole chat turn.
+                logger.warning("failed to load remembered facts for chat context", exc_info=True)
+                facts = []
         messages = [ChatMessage(role="system", content=build_system_prompt(PERSONA, facts))] + messages
 
     tools = build_tools(

@@ -34,11 +34,17 @@ class FakeWebSearchClient:
 class FakeMemoryStore:
     def __init__(self, facts: Optional[List[str]] = None) -> None:
         self._facts = facts or []
+        self.received_user_id = None
+        self.received_query_text = None
+        self.received_limit = None
 
     def remember_fact(self, user_id: str, fact_text: str) -> None:
         pass
 
-    def list_facts(self, user_id: str) -> List[str]:
+    def search_facts(self, user_id: str, query_text: str, limit: int = 10) -> List[str]:
+        self.received_user_id = user_id
+        self.received_query_text = query_text
+        self.received_limit = limit
         return self._facts
 
 
@@ -117,7 +123,8 @@ def test_chat_injects_remembered_facts_into_the_system_prompt() -> None:
     fake_engine = FakeChatEngine()
     app.dependency_overrides[get_chat_engine] = lambda: fake_engine
     facts = ["The user's cat is named Whiskers.", "I'm vegetarian"]
-    app.dependency_overrides[get_memory_store] = lambda: FakeMemoryStore(facts=facts)
+    fake_store = FakeMemoryStore(facts=facts)
+    app.dependency_overrides[get_memory_store] = lambda: fake_store
 
     response = client.post("/chat", json=_request([ChatMessage(role="user", content="hello")]))
 
@@ -126,6 +133,9 @@ def test_chat_injects_remembered_facts_into_the_system_prompt() -> None:
     assert system_content == build_system_prompt(PERSONA, facts)
     for fact in facts:
         assert fact in system_content
+    assert fake_store.received_user_id == "test-user-id"
+    assert fake_store.received_query_text == "hello"
+    assert fake_store.received_limit == 10
 
 
 def test_chat_falls_back_to_no_facts_when_memory_store_read_fails() -> None:
@@ -133,7 +143,7 @@ def test_chat_falls_back_to_no_facts_when_memory_store_read_fails() -> None:
         def remember_fact(self, user_id: str, fact_text: str) -> None:
             pass
 
-        def list_facts(self, user_id: str) -> List[str]:
+        def search_facts(self, user_id: str, query_text: str, limit: int = 10) -> List[str]:
             raise RuntimeError("db unreachable")
 
     fake_engine = FakeChatEngine()
@@ -143,6 +153,23 @@ def test_chat_falls_back_to_no_facts_when_memory_store_read_fails() -> None:
     response = client.post("/chat", json=_request([ChatMessage(role="user", content="hello")]))
 
     assert response.status_code == 200
+    assert fake_engine.received_messages[0].content == SYSTEM_PROMPT
+
+
+def test_chat_skips_search_facts_when_last_message_has_no_content() -> None:
+    """Guards against embedding an empty/missing string -- not meaningful,
+    and search_facts shouldn't even be called in that case."""
+    fake_engine = FakeChatEngine()
+    app.dependency_overrides[get_chat_engine] = lambda: fake_engine
+    fake_store = FakeMemoryStore(facts=["should never be returned"])
+    app.dependency_overrides[get_memory_store] = lambda: fake_store
+
+    response = client.post(
+        "/chat", json=_request([ChatMessage(role="user", tool_calls=[{"id": "call_1"}])])
+    )
+
+    assert response.status_code == 200
+    assert fake_store.received_query_text is None
     assert fake_engine.received_messages[0].content == SYSTEM_PROMPT
 
 

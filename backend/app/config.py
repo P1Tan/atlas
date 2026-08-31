@@ -6,6 +6,7 @@ load_dotenv()
 
 EXTRACTION_MODEL = os.getenv("ATLAS_EXTRACTION_MODEL", "gpt-5-mini")
 CHAT_MODEL = os.getenv("ATLAS_CHAT_MODEL", "gpt-5-mini")
+EMBEDDING_MODEL = os.getenv("ATLAS_EMBEDDING_MODEL", "text-embedding-3-small")
 
 # The assistant's character (tone, address style) -- configuration, not
 # hard-coded, per assistant-spec.md §10, so it can be tuned or swapped

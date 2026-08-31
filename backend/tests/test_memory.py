@@ -1,5 +1,3 @@
-from typing import List
-
 from app.tools import _build_remember_fact_tool
 
 
@@ -11,9 +9,6 @@ class FakeMemoryStore:
     def remember_fact(self, user_id: str, fact_text: str) -> None:
         self.received_user_id = user_id
         self.received_fact_text = fact_text
-
-    def list_facts(self, user_id: str) -> List[str]:
-        return []
 
 
 def test_remember_fact_tool_calls_the_store_with_user_id_and_fact_text() -> None:
