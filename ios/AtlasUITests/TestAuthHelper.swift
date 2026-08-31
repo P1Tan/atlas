@@ -117,4 +117,47 @@ enum TestAuthHelper {
             )
         }
     }
+
+    /// Posts a single user message directly to the real `/chat` endpoint,
+    /// bypassing the app UI entirely -- used to seed backend state (e.g. a
+    /// fact via the `remember_fact` tool) before `app.launch()`, since there
+    /// is no REST write path for facts and the only way to create one is a
+    /// real conversational turn.
+    static func sendChatMessage(_ text: String, accessToken: String) async throws {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let referenceDatetime = formatter.string(from: Date())
+
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:8000/chat")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "messages": [["role": "user", "content": text]],
+            "reference_datetime": referenceDatetime,
+            "timezone": "America/New_York",
+        ])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(
+                domain: "TestAuthHelper",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Non-HTTP response seeding chat message."]
+            )
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            let bodyText = String(data: data, encoding: .utf8) ?? "<non-UTF8 body>"
+            throw NSError(
+                domain: "TestAuthHelper",
+                code: httpResponse.statusCode,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Seeding /chat message failed with status \(httpResponse.statusCode): \(bodyText)"
+                ]
+            )
+        }
+    }
 }

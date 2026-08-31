@@ -1,7 +1,7 @@
 import SwiftUI
 
 private enum AtlasTab: Hashable {
-    case chat, email
+    case chat, memory, email
 }
 
 struct ContentView: View {
@@ -60,6 +60,13 @@ private struct MainTabView: View {
             }
             .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
             .tag(AtlasTab.chat)
+
+            NavigationStack {
+                MemoryView()
+                    .navigationTitle("Memory")
+            }
+            .tabItem { Label("Memory", systemImage: "brain") }
+            .tag(AtlasTab.memory)
 
             NavigationStack {
                 PasteInputView()
