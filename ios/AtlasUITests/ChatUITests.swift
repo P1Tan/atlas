@@ -3,14 +3,15 @@ import XCTest
 /// Requires the backend running locally at 127.0.0.1:8000 (see backend/README)
 /// -- drives the real /chat endpoint and a real GPT-5 mini call, not a mock.
 /// Prompts ask for exact, deterministic wording so assertions aren't flaky.
+@MainActor
 final class ChatUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
 
-    func testSendButtonDisabledUntilTextEntered() throws {
+    func testSendButtonDisabledUntilTextEntered() async throws {
         let app = XCUIApplication()
-        app.launch()
+        try await TestAuthHelper.launchSignedIn(app)
 
         let input = app.textFields["ChatInputField"]
         XCTAssertTrue(input.waitForExistence(timeout: 5))
@@ -25,9 +26,9 @@ final class ChatUITests: XCTestCase {
         XCTAssertTrue(sendButton.isEnabled)
     }
 
-    func testSendingAMessageProducesAnAssistantReply() throws {
+    func testSendingAMessageProducesAnAssistantReply() async throws {
         let app = XCUIApplication()
-        app.launch()
+        try await TestAuthHelper.launchSignedIn(app)
 
         let input = app.textFields["ChatInputField"]
         XCTAssertTrue(input.waitForExistence(timeout: 5))

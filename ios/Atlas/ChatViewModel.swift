@@ -21,7 +21,7 @@ final class ChatViewModel: ObservableObject {
         return encoder
     }()
 
-    func send(_ text: String) async {
+    func send(_ text: String, accessToken: String?) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -40,6 +40,9 @@ final class ChatViewModel: ObservableObject {
             var urlRequest = URLRequest(url: URL(string: "\(baseURL)/chat")!)
             urlRequest.httpMethod = "POST"
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let accessToken {
+                urlRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            }
             urlRequest.httpBody = try Self.requestEncoder.encode(request)
 
             let (data, response) = try await URLSession.shared.data(for: urlRequest)
@@ -48,7 +51,10 @@ final class ChatViewModel: ObservableObject {
                 return
             }
             guard http.statusCode == 200 else {
-                errorMessage = "Chat failed (server returned \(http.statusCode))."
+                errorMessage =
+                    http.statusCode == 401
+                    ? "Your session expired. Please sign in again."
+                    : "Chat failed (server returned \(http.statusCode))."
                 return
             }
 

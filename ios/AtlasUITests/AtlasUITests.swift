@@ -3,14 +3,15 @@ import XCTest
 /// Requires the backend running locally at 127.0.0.1:8000 (see backend/README)
 /// for the extraction flow tests -- these drive the real network call, not a
 /// mock, since the point is confirming the app and backend agree end to end.
+@MainActor
 final class AtlasUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
 
-    func testExtractButtonDisabledUntilTextEntered() throws {
+    func testExtractButtonDisabledUntilTextEntered() async throws {
         let app = XCUIApplication()
-        app.launch()
+        try await TestAuthHelper.launchSignedIn(app)
         app.tabBars.buttons["Email"].tap()
 
         let textEditor = app.textViews["EmailTextEditor"]
@@ -26,9 +27,9 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue(extractButton.isEnabled)
     }
 
-    func testPasteInputExtractsAndDisplaysEvents() throws {
+    func testPasteInputExtractsAndDisplaysEvents() async throws {
         let app = XCUIApplication()
-        app.launch()
+        try await TestAuthHelper.launchSignedIn(app)
         extract(app, text: "Let's meet next Thursday at 3pm to sync on the launch.")
 
         let firstEventTitle = app.textFields.matching(identifier: "EventTitle").firstMatch
@@ -40,9 +41,9 @@ final class AtlasUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["ExtractErrorMessage"].exists)
     }
 
-    func testNoEventsFoundStateForNonSchedulingText() throws {
+    func testNoEventsFoundStateForNonSchedulingText() async throws {
         let app = XCUIApplication()
-        app.launch()
+        try await TestAuthHelper.launchSignedIn(app)
         extract(app, text: "Thanks for the update, sounds great.")
 
         let noEventsLabel = app.staticTexts["NoEventsFoundLabel"]
@@ -50,9 +51,9 @@ final class AtlasUITests: XCTestCase {
         XCTAssertFalse(app.otherElements["EventList"].exists)
     }
 
-    func testEditingTitleUpdatesTheField() throws {
+    func testEditingTitleUpdatesTheField() async throws {
         let app = XCUIApplication()
-        app.launch()
+        try await TestAuthHelper.launchSignedIn(app)
         extract(app, text: "Let's meet next Thursday at 3pm to sync on the launch.")
 
         let title = app.textFields.matching(identifier: "EventTitle").firstMatch
@@ -70,18 +71,18 @@ final class AtlasUITests: XCTestCase {
         XCTAssertTrue((title.value as? String)?.contains("Corrected Title") ?? false)
     }
 
-    func testUnresolvableDateShowsWarningOnTheDateField() throws {
+    func testUnresolvableDateShowsWarningOnTheDateField() async throws {
         let app = XCUIApplication()
-        app.launch()
+        try await TestAuthHelper.launchSignedIn(app)
         extract(app, text: "We should grab coffee sometime soon, let me know what works.")
 
         let warning = app.staticTexts["EventDateWarning"]
         XCTAssertTrue(warning.waitForExistence(timeout: 30))
     }
 
-    func testAddEndTimeTogglesEndDatePicker() throws {
+    func testAddEndTimeTogglesEndDatePicker() async throws {
         let app = XCUIApplication()
-        app.launch()
+        try await TestAuthHelper.launchSignedIn(app)
         extract(app, text: "Let's meet next Thursday at 3pm to sync on the launch.")
 
         XCTAssertTrue(app.textFields.matching(identifier: "EventTitle").firstMatch.waitForExistence(timeout: 30))
@@ -101,9 +102,9 @@ final class AtlasUITests: XCTestCase {
     /// Requires calendar access pre-granted for com.p1tan.atlas, e.g.
     /// `xcrun simctl privacy <device> grant calendar com.p1tan.atlas`,
     /// so this exercises the actual EventKit write, not a permission prompt.
-    func testAddToCalendarWritesEventSuccessfully() throws {
+    func testAddToCalendarWritesEventSuccessfully() async throws {
         let app = XCUIApplication()
-        app.launch()
+        try await TestAuthHelper.launchSignedIn(app)
         extract(app, text: "Let's meet next Thursday at 3pm to sync on the launch.")
 
         XCTAssertTrue(app.textFields.matching(identifier: "EventTitle").firstMatch.waitForExistence(timeout: 30))
@@ -124,9 +125,9 @@ final class AtlasUITests: XCTestCase {
     /// would fetch real unread mail. Doesn't cover the disconnected state,
     /// since forcing a disconnect here would blow away a real, working
     /// credential just for a UI assertion.
-    func testCheckGmailButtonAppearsWhenGmailIsConnected() throws {
+    func testCheckGmailButtonAppearsWhenGmailIsConnected() async throws {
         let app = XCUIApplication()
-        app.launch()
+        try await TestAuthHelper.launchSignedIn(app)
         app.tabBars.buttons["Email"].tap()
 
         XCTAssertTrue(app.buttons["CheckGmailButton"].waitForExistence(timeout: 10))

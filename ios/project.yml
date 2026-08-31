@@ -4,6 +4,10 @@ options:
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
+packages:
+  Supabase:
+    url: https://github.com/supabase/supabase-swift
+    from: 2.0.0
 targets:
   Atlas:
     type: application
@@ -33,6 +37,7 @@ targets:
     dependencies:
       - target: AtlasShareExtension
         embed: true
+      - package: Supabase
   AtlasShareExtension:
     type: app-extension
     platform: iOS

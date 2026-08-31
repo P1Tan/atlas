@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.chat import SYSTEM_PROMPT, ChatMessage, get_chat_engine
 from app.extraction import ExtractedEventDraft, get_extractor
 from app.main import app
+from app.supabase_client import AuthenticatedUser, get_current_user
 from app.weather import get_weather_client
 from app.web_search import SearchResponse, get_web_search_client
 
@@ -46,6 +47,9 @@ class FakeChatEngine:
 
 
 def setup_function() -> None:
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        id="test-user-id", email="test@example.com"
+    )
     app.dependency_overrides[get_extractor] = lambda: FakeExtractor()
     app.dependency_overrides[get_weather_client] = lambda: FakeWeatherClient()
     app.dependency_overrides[get_web_search_client] = lambda: FakeWebSearchClient()
@@ -61,6 +65,18 @@ def _request(messages: list[ChatMessage]) -> dict:
         "reference_datetime": "2026-08-26T12:00:00",
         "timezone": "America/New_York",
     }
+
+
+def test_chat_requires_authentication() -> None:
+    # Override cleared for this one test -- proves /chat actually enforces
+    # get_current_user rather than only working because setup_function
+    # overrides it away for every other test in this file.
+    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides[get_chat_engine] = lambda: FakeChatEngine()
+
+    response = client.post("/chat", json=_request([ChatMessage(role="user", content="hi")]))
+
+    assert response.status_code == 401
 
 
 def test_chat_requires_last_message_to_be_from_user() -> None:

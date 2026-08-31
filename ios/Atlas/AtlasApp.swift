@@ -4,6 +4,7 @@ import UserNotifications
 @main
 struct AtlasApp: App {
     @StateObject private var shareInbox = ShareInbox()
+    @StateObject private var authViewModel = AuthViewModel()
 
     init() {
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
@@ -13,8 +14,16 @@ struct AtlasApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(shareInbox)
+                .environmentObject(authViewModel)
+                .task {
+                    await authViewModel.bootstrap()
+                }
                 .onOpenURL { url in
-                    shareInbox.handle(url: url)
+                    if url.host == "login-callback" {
+                        Task { await authViewModel.handle(url: url) }
+                    } else {
+                        shareInbox.handle(url: url)
+                    }
                 }
         }
     }

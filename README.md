@@ -6,7 +6,9 @@ A personal assistant, starting with a text-first email-to-calendar tool. See [`a
 
 Phase 0 (text-first email-to-calendar) is complete: `/extract` does LLM-based event extraction with deterministic date resolution and ambiguity flagging; live Gmail (read-only OAuth) feeds the same pipeline; iOS lets you paste, share from Mail, or pull from Gmail, review/edit proposed events, and confirm to write them to the calendar via EventKit.
 
-Phase 1 (MVP) is underway. `/chat` is a general multi-turn, tool-calling conversation endpoint with a configurable persona (`ATLAS_PERSONA` env var, see `.env.example`) and four real tools: `extract_calendar_events` (proposes events from pasted text, same pipeline `/extract` uses), `set_reminder` (schedules a real on-device local notification via iOS's `ReminderScheduler`, given a title and natural-language time), `get_weather` (current conditions + short forecast via the free, keyless Open-Meteo API), and `web_search` (fresh information via the Tavily API — needs `TAVILY_API_KEY`, see `.env.example`). Milestone 4 (chat core & persona) is complete; Milestone 5 (remaining MVP tools) is complete.
+Phase 1 (MVP) is underway. `/chat` is a general multi-turn, tool-calling conversation endpoint with a configurable persona (`ATLAS_PERSONA` env var, see `.env.example`) and four real tools: `extract_calendar_events` (proposes events from pasted text, same pipeline `/extract` uses), `set_reminder` (schedules a real on-device local notification via iOS's `ReminderScheduler`, given a title and natural-language time), `get_weather` (current conditions + short forecast via the free, keyless Open-Meteo API), and `web_search` (fresh information via the Tavily API — needs `TAVILY_API_KEY`, see `.env.example`). Milestone 4 (chat core & persona) and Milestone 5 (remaining MVP tools) are complete.
+
+The app now requires sign-in (Supabase Auth, magic-link email) — `/chat` requires a valid bearer token, and iOS gates the whole app behind a sign-in screen until one exists. See `.env.example` for the `SUPABASE_*` variables needed to run the backend.
 
 ## Repo layout
 

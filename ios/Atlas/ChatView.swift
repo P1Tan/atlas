@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ChatView: View {
     @StateObject private var viewModel = ChatViewModel()
+    @EnvironmentObject private var authViewModel: AuthViewModel
     @State private var inputText: String = ""
     @FocusState private var isInputFocused: Bool
 
@@ -55,7 +56,10 @@ struct ChatView: View {
                     let text = inputText
                     inputText = ""
                     isInputFocused = false
-                    Task { await viewModel.send(text) }
+                    Task {
+                        let accessToken = await authViewModel.currentAccessToken()
+                        await viewModel.send(text, accessToken: accessToken)
+                    }
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
@@ -91,4 +95,5 @@ private struct ChatBubble: View {
     NavigationStack {
         ChatView()
     }
+    .environmentObject(AuthViewModel())
 }

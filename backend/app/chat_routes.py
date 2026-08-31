@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.chat import ChatEngine, ChatMessage, SYSTEM_PROMPT, get_chat_engine
 from app.extraction import EventExtractor, get_extractor
+from app.supabase_client import AuthenticatedUser, get_current_user
 from app.tools import build_tools
 from app.weather import WeatherClient, get_weather_client
 from app.web_search import WebSearchClient, get_web_search_client
@@ -28,6 +29,7 @@ class ChatResponse(BaseModel):
 @router.post("/chat")
 def chat(
     request: ChatRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
     engine: ChatEngine = Depends(get_chat_engine),
     extractor: EventExtractor = Depends(get_extractor),
     weather_client: WeatherClient = Depends(get_weather_client),
