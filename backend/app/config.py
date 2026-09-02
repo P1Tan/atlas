@@ -36,3 +36,14 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 # Bypasses Row Level Security -- backend-only, never sent to the iOS client.
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+
+LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")
+LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
+
+# Milestone 7.1 scaffold only -- real per-session room/token issuance (via a
+# /chat-style authenticated endpoint) is deferred until the iOS app actually
+# initiates voice sessions (7.2+). For now this is a single fixed dev room
+# you join manually via a browser test client to prove the pipeline works.
+VOICE_DEV_ROOM_NAME = os.getenv("ATLAS_VOICE_DEV_ROOM_NAME", "atlas-dev")
+VOICE_DEV_TIMEZONE = os.getenv("ATLAS_VOICE_DEV_TIMEZONE", "America/New_York")

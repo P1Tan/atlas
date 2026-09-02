@@ -19,7 +19,7 @@ ios/       SwiftUI app (iOS 26+)
 
 ## Backend
 
-Requires Python 3.9+.
+Requires Python 3.11+ (raised from 3.9 in Milestone 7.1 — `pipecat-ai`'s actively-maintained voice-pipeline API requires it).
 
 ```
 cd backend
@@ -55,6 +55,29 @@ xcrun simctl privacy <device-udid> grant calendar com.p1tan.atlas
 
 cd ios
 xcodebuild test -project Atlas.xcodeproj -scheme Atlas -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
+## Voice agent (Milestone 7.1 scaffold)
+
+A standalone script (`backend/app/voice_agent.py`), not part of the FastAPI server, that proves the Pipecat + LiveKit voice pipeline works end-to-end (speech-to-text → the same tool-calling LLM chat loop and persona as `/chat` → text-to-speech) and gives a rough latency read. It is a scaffold: not production voice UX, and there is no LiveKit agent auto-dispatch in Pipecat, so this script owns joining the room itself, like any other participant.
+
+Requires `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` in `.env` (a free [LiveKit Cloud](https://cloud.livekit.io) project) — see `.env.example`. Reuses the existing `OPENAI_API_KEY` for STT/LLM/TTS, so no other new keys are needed.
+
+```
+cd backend
+source .venv/bin/activate
+python -m app.voice_agent
+```
+
+This joins a fixed dev room (`ATLAS_VOICE_DEV_ROOM_NAME`, default `atlas-dev`) as an agent participant and waits there. To actually talk to it, join the *same* room from a browser at [meet.livekit.io](https://meet.livekit.io) using the same `LIVEKIT_URL` and a token minted for a human participant. Generating that human token is a manual step for now — either use the LiveKit Cloud dashboard's "Generate token" feature for that room, or a one-off Python snippet:
+
+```python
+from datetime import timedelta
+from livekit import api
+token = api.AccessToken("<LIVEKIT_API_KEY>", "<LIVEKIT_API_SECRET>")
+token.with_identity("dev-tester").with_grants(api.VideoGrants(room_join=True, room="atlas-dev"))
+token.with_ttl(timedelta(hours=1))  # a leaked token grants room access without the secret itself
+print(token.to_jwt())
 ```
 
 ## Environment variables
