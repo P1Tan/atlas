@@ -1,7 +1,17 @@
-"""Milestone 7.1 voice pipeline scaffold -- a standalone script, NOT part of
-the FastAPI server, that proves the Pipecat + LiveKit plumbing works
+"""Milestone 7.1/7.2a voice pipeline scaffold -- a standalone script, NOT
+part of the FastAPI server, that proves the Pipecat + LiveKit plumbing works
 end-to-end (STT -> LLM (with the same tools/persona as text chat) -> TTS)
 and gives a rough latency read. Not production voice UX.
+
+As of Milestone 7.2a, STT is no longer performed server-side. The iOS client
+(7.2b, on-device Apple Speech, built separately) transcribes speech itself
+and sends transcript text plus turn-boundary signals over LiveKit's data-
+message channel; `app/voice_transcript_bridge.py`'s `LiveKitTranscriptBridge`
+translates those data messages into the same Pipecat frames
+(`UserStartedSpeakingFrame`, `InterimTranscriptionFrame`, `TranscriptionFrame`,
+`UserStoppedSpeakingFrame`) that `OpenAISTTService` + `SileroVADAnalyzer`
+used to produce in 7.1. There is no server-side STT service or VAD analyzer
+in this pipeline anymore.
 
 There is no LiveKit agent auto-dispatch in Pipecat (confirmed: no such
 feature exists or is planned), so this script owns joining the room itself,
@@ -16,7 +26,6 @@ import logging
 from datetime import datetime
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
-from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker, ProcessorUnusablePolicy
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -26,9 +35,9 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.runner.livekit import generate_token_with_agent
 from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.services.openai.stt import OpenAISTTService
 from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.transports.livekit.transport import LiveKitParams, LiveKitTransport
+from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
 from app.chat import PERSONA, build_system_prompt
@@ -43,6 +52,7 @@ from app.extraction import get_default_extractor
 from app.memory import get_default_memory_store
 from app.tools import build_tools
 from app.voice_tools import to_function_schemas
+from app.voice_transcript_bridge import LiveKitTranscriptBridge
 from app.weather import get_default_weather_client
 from app.web_search import get_default_web_search_client
 
@@ -97,10 +107,14 @@ async def main() -> None:
         url=LIVEKIT_URL,
         token=token,
         room_name=VOICE_DEV_ROOM_NAME,
-        params=LiveKitParams(audio_in_enabled=True, audio_out_enabled=True),
+        # audio_in_enabled=False: STT moved on-device (iOS, Milestone 7.2b) --
+        # the server no longer needs raw incoming audio, only the data-channel
+        # transcript messages that app/voice_transcript_bridge.py translates
+        # into Pipecat frames. audio_out_enabled stays True: TTS output audio
+        # still flows to the client as before.
+        params=LiveKitParams(audio_in_enabled=False, audio_out_enabled=True),
     )
 
-    stt = OpenAISTTService()
     llm = OpenAILLMService(
         settings=OpenAILLMService.Settings(system_instruction=build_system_prompt(PERSONA))
     )
@@ -135,13 +149,13 @@ async def main() -> None:
     context = LLMContext(tools=function_schemas)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
+        user_params=LLMUserAggregatorParams(user_turn_strategies=ExternalUserTurnStrategies()),
     )
 
     pipeline = Pipeline(
         [
             transport.input(),
-            stt,
+            LiveKitTranscriptBridge(),
             user_aggregator,
             llm,
             tts,
