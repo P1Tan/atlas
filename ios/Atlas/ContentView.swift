@@ -2,9 +2,6 @@ import SwiftUI
 
 private enum AtlasTab: Hashable {
     case chat, memory, email
-    #if DEBUG
-    case voiceDebug
-    #endif
 }
 
 struct ContentView: View {
@@ -77,15 +74,6 @@ private struct MainTabView: View {
             }
             .tabItem { Label("Email", systemImage: "envelope") }
             .tag(AtlasTab.email)
-
-            #if DEBUG
-            NavigationStack {
-                VoiceDebugView()
-                    .navigationTitle("Voice (Debug)")
-            }
-            .tabItem { Label("Voice (Debug)", systemImage: "waveform") }
-            .tag(AtlasTab.voiceDebug)
-            #endif
         }
         .task {
             await healthChecker.check()

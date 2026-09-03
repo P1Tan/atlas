@@ -67,3 +67,32 @@ struct ChatRequest: Encodable {
 struct ChatResponse: Decodable {
     let newMessages: [ChatMessage]
 }
+
+/// The result shape `set_reminder` returns, whether it ran during a
+/// text-chat turn (as a `ChatMessage(role: .tool, ...)`'s JSON `content`) or
+/// a voice turn (as a `ToolResultMessage`'s `result`, Milestone 7.4a-2) --
+/// the backend uses the exact same tool-result payload either way, so both
+/// paths decode into this one shared struct rather than duplicating it.
+struct SetReminderToolResult: Decodable {
+    let ok: Bool
+    let title: String?
+    let triggerTime: String?
+    let reason: String?
+}
+
+/// Backend -> iOS voice message (Milestone 7.4a): the assistant's full reply
+/// text for the current voice turn, sent as a LiveKit data message on the
+/// voice room. Decoded by `VoiceSessionController`.
+struct AssistantReplyMessage: Decodable {
+    let type: String
+    let text: String
+}
+
+/// Backend -> iOS voice message (Milestone 7.4a-2): the outcome of a tool
+/// call made during a voice turn, sent as a LiveKit data message on the
+/// voice room. Decoded by `VoiceSessionController`.
+struct ToolResultMessage: Decodable {
+    let type: String
+    let name: String
+    let result: SetReminderToolResult
+}

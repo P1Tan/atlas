@@ -43,6 +43,8 @@ struct ChatView: View {
                     .accessibilityIdentifier("ChatErrorMessage")
             }
 
+            voiceStatusArea
+
             Divider()
 
             HStack(alignment: .bottom, spacing: 8) {
@@ -51,6 +53,16 @@ struct ChatView: View {
                     .lineLimit(1...5)
                     .focused($isInputFocused)
                     .accessibilityIdentifier("ChatInputField")
+
+                Button {
+                    handleMicTap()
+                } label: {
+                    Image(systemName: viewModel.voiceState == .listening ? "stop.circle.fill" : "mic.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(viewModel.voiceState == .listening ? Color.red : Color.accentColor)
+                }
+                .disabled(viewModel.voiceState == .thinking || viewModel.voiceState == .speaking)
+                .accessibilityIdentifier("VoiceMicButton")
 
                 Button {
                     let text = inputText
@@ -69,6 +81,118 @@ struct ChatView: View {
             }
             .padding()
         }
+    }
+
+    /// The status/controls area shown above the input bar while a voice turn
+    /// is in progress -- text typing and sending stay fully available the
+    /// whole time (per the spec's "text and voice turns share one
+    /// conversation view"), this is purely additive.
+    @ViewBuilder
+    private var voiceStatusArea: some View {
+        switch viewModel.voiceState {
+        case .idle:
+            EmptyView()
+        case .listening:
+            VoiceListeningBar(
+                interimTranscript: viewModel.liveInterimTranscript,
+                onCancel: { Task { await viewModel.cancelVoiceTurn() } }
+            )
+        case .thinking:
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("Atlas is thinking…")
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal)
+            .padding(.top, 4)
+            .accessibilityIdentifier("VoiceThinkingIndicator")
+        case .speaking:
+            HStack(spacing: 12) {
+                Image(systemName: "waveform")
+                    .foregroundStyle(Color.accentColor)
+                Text("Speaking…")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    viewModel.stopPlayback()
+                } label: {
+                    Image(systemName: "stop.fill")
+                }
+                .accessibilityIdentifier("VoiceStopPlaybackButton")
+
+                Button {
+                    viewModel.replayLastReply()
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                }
+                .accessibilityIdentifier("VoiceReplayButton")
+            }
+            .padding(.horizontal)
+            .padding(.top, 4)
+            .accessibilityIdentifier("VoiceSpeakingIndicator")
+        }
+    }
+
+    private func handleMicTap() {
+        switch viewModel.voiceState {
+        case .idle:
+            Task {
+                let accessToken = await authViewModel.currentAccessToken()
+                await viewModel.startVoiceTurn(accessToken: accessToken)
+            }
+        case .listening:
+            Task { await viewModel.stopVoiceTurn() }
+        case .thinking, .speaking:
+            break
+        }
+    }
+}
+
+/// The "unmistakable live recording indicator" the spec calls for while
+/// listening -- a pulsing dot plus the live interim transcript, and a
+/// clearly separate cancel ("X") action from the mic button's own
+/// tap-to-stop. Never surprises the user into thinking a tap silently did
+/// nothing: something is always visibly happening the instant the mic opens.
+private struct VoiceListeningBar: View {
+    let interimTranscript: String?
+    let onCancel: () -> Void
+
+    @State private var isPulsing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 10, height: 10)
+                    .opacity(isPulsing ? 0.35 : 1.0)
+                    .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: isPulsing)
+                    .onAppear { isPulsing = true }
+                    .accessibilityIdentifier("VoiceListeningIndicator")
+
+                Text("Listening…")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button {
+                    onCancel()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("VoiceCancelButton")
+            }
+
+            Text(interimTranscript?.isEmpty == false ? interimTranscript! : " ")
+                .font(.body)
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("VoiceInterimTranscript")
+        }
+        .padding(.horizontal)
+        .padding(.top, 4)
     }
 }
 
