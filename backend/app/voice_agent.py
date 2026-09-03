@@ -17,6 +17,17 @@ translates those data messages into the same Pipecat frames
 used to produce in 7.1. There is no server-side STT service or VAD analyzer
 in this pipeline anymore.
 
+As of Milestone 7.4a, the assistant's reply text is no longer sent to iOS as
+audio alone. `app/voice_assistant_reply_bridge.py`'s
+`LiveKitAssistantReplyBridge` sits between `llm` and `tts`, accumulates the
+LLM's streamed text for each inference round, and republishes the full reply
+back over the same LiveKit data-message channel as a
+`{"type": "assistant_reply", "text": "..."}` message -- symmetric to, but
+distinct from, the `speech_started`/`interim`/`final`/`speech_stopped`
+messages iOS sends the other direction (7.2a/7.2b). This lets iOS show the
+assistant's turn in a unified chat transcript alongside the spoken audio,
+rather than only playing it out loud.
+
 There is no LiveKit agent auto-dispatch in Pipecat (confirmed: no such
 feature exists or is planned), so this script owns joining the room itself,
 like any other participant -- run it with `python -m app.voice_agent` while
@@ -57,6 +68,7 @@ from app.config import (
 from app.extraction import get_default_extractor
 from app.memory import get_default_memory_store
 from app.tools import build_tools
+from app.voice_assistant_reply_bridge import LiveKitAssistantReplyBridge
 from app.voice_tools import to_function_schemas
 from app.voice_transcript_bridge import LiveKitTranscriptBridge
 from app.weather import get_default_weather_client
@@ -168,6 +180,7 @@ async def main() -> None:
             LiveKitTranscriptBridge(),
             user_aggregator,
             llm,
+            LiveKitAssistantReplyBridge(),
             tts,
             transport.output(),
             assistant_aggregator,
