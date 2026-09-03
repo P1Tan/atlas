@@ -5,6 +5,7 @@ import UserNotifications
 struct AtlasApp: App {
     @StateObject private var shareInbox = ShareInbox()
     @StateObject private var authViewModel = AuthViewModel()
+    @StateObject private var launchCoordinator = LaunchCoordinator()
 
     init() {
         UNUserNotificationCenter.current().delegate = NotificationPresenter.shared
@@ -15,6 +16,7 @@ struct AtlasApp: App {
             ContentView()
                 .environmentObject(shareInbox)
                 .environmentObject(authViewModel)
+                .environmentObject(launchCoordinator)
                 .task {
                     await authViewModel.bootstrap()
                 }

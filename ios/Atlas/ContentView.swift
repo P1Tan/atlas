@@ -114,4 +114,5 @@ private struct BackendStatusIndicator: View {
     ContentView()
         .environmentObject(ShareInbox())
         .environmentObject(AuthViewModel())
+        .environmentObject(LaunchCoordinator())
 }

@@ -25,6 +25,7 @@ final class ChatViewModel: ObservableObject {
     /// committed transcript becomes a real `ChatMessage` (see
     /// `handleFinalTranscript`).
     @Published var liveInterimTranscript: String?
+    private var isStartingVoiceTurn = false
 
     private let baseURL = "http://127.0.0.1:8000"
     private let reminderScheduler = ReminderScheduler()
@@ -144,7 +145,18 @@ final class ChatViewModel: ObservableObject {
     /// on failure (permission denial, token fetch failure, room connect
     /// failure).
     func startVoiceTurn(accessToken: String?) async {
-        guard voiceState == .idle else { return }
+        // Milestone 8.1 introduced a second, automatic caller of this method
+        // (launch-to-listen) alongside the existing manual mic-tap caller.
+        // `voiceState` itself isn't updated until the `await` below returns,
+        // so without this synchronous flag two near-simultaneous callers can
+        // both pass the `voiceState == .idle` guard; the loser would then
+        // hit `VoiceSessionController`'s own "already connecting" early
+        // return and optimistically flip to `.listening` even though it
+        // did nothing -- if the real connection later failed, that caller's
+        // UI would be stuck showing "Listening…" with no active session.
+        guard voiceState == .idle, !isStartingVoiceTurn else { return }
+        isStartingVoiceTurn = true
+        defer { isStartingVoiceTurn = false }
         errorMessage = nil
         liveInterimTranscript = nil
         let started = await voiceController.startVoiceTurn(accessToken: accessToken, priorMessages: messages)

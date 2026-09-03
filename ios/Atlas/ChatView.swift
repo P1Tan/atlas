@@ -3,6 +3,8 @@ import SwiftUI
 struct ChatView: View {
     @StateObject private var viewModel = ChatViewModel()
     @EnvironmentObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var launchCoordinator: LaunchCoordinator
+    @EnvironmentObject private var shareInbox: ShareInbox
     @State private var inputText: String = ""
     @FocusState private var isInputFocused: Bool
 
@@ -80,6 +82,33 @@ struct ChatView: View {
                 .accessibilityIdentifier("ChatSendButton")
             }
             .padding()
+        }
+        // Milestone 8.1 (FR11, launch-to-listen): on a genuine cold open,
+        // drop straight into listening rather than making the user find and
+        // tap the mic button first -- reuses the exact same startVoiceTurn()
+        // path the mic button itself calls, so the listening state's
+        // existing "unmistakable indicator + instant cancel" UI (mic-launch
+        // guard, S11) applies here automatically, no separate UI needed.
+        // consumeShouldAutoStartVoice() only ever returns true once per
+        // process lifetime, so this is a no-op on every later appearance of
+        // this view (tab switches, foreground/background cycles, etc.).
+        //
+        // Chat is always the default tab, so a cold launch via the share
+        // extension's atlas://extract deep link (AtlasApp's .onOpenURL ->
+        // ShareInbox.handle(url:)) mounts this same view and .task before
+        // ContentView's onChange(of: shareInbox.pendingText) switches to the
+        // Email tab. SwiftUI doesn't guarantee .onOpenURL fires before a
+        // sibling view's .task on cold launch, so a short grace window is
+        // given for a racing share hand-off to arrive before treating this
+        // as a genuine "opened the app to talk" launch -- auto-starting
+        // voice underneath a share-to-Email hand-off would be surprising
+        // and would open a LiveKit connection nobody asked for.
+        .task {
+            guard launchCoordinator.consumeShouldAutoStartVoice() else { return }
+            try? await Task.sleep(for: .milliseconds(150))
+            guard shareInbox.pendingText == nil else { return }
+            let accessToken = await authViewModel.currentAccessToken()
+            await viewModel.startVoiceTurn(accessToken: accessToken)
         }
     }
 
@@ -220,4 +249,6 @@ private struct ChatBubble: View {
         ChatView()
     }
     .environmentObject(AuthViewModel())
+    .environmentObject(LaunchCoordinator())
+    .environmentObject(ShareInbox())
 }

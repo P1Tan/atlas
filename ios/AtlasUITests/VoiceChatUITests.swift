@@ -140,6 +140,44 @@ final class VoiceChatUITests: XCTestCase {
         XCTAssertTrue(micButton.exists, "Expected the Chat screen's mic button to still be present.")
     }
 
+    /// Milestone 8.1 (FR11, launch-to-listen): a genuine cold launch should
+    /// drop straight into listening with no mic tap at all -- this is the
+    /// one behavioral difference from the two tests above, which both start
+    /// by tapping `VoiceMicButton` explicitly. `TestAuthHelper.launchSignedIn`
+    /// calls `app.launch()`, a fresh process per test, so `LaunchCoordinator`'s
+    /// one-shot gate has not fired yet and this is a genuine test of the
+    /// auto-start path, not a no-op.
+    func testAppLaunchAutoStartsListeningWithoutTappingMic() async throws {
+        let app = XCUIApplication()
+        try await TestAuthHelper.launchSignedIn(app)
+        installVoicePermissionInterruptionMonitor()
+
+        // Nudges XCUITest to process the system permission alert the
+        // auto-start triggers -- no element to tap first, unlike the other
+        // tests, since this path never involves the mic button.
+        app.tap()
+
+        let cancelButton = app.buttons["VoiceCancelButton"]
+        let errorMessage = app.staticTexts["ChatErrorMessage"]
+
+        let reachedAKnownState = waitUntil(timeout: 20) {
+            cancelButton.exists || errorMessage.exists
+        }
+        XCTAssertTrue(
+            reachedAKnownState,
+            "Expected launch to auto-reach either a listening state (visible cancel button) or a "
+                + "surfaced error, with no mic tap at all."
+        )
+
+        if cancelButton.exists {
+            cancelButton.tap()
+            XCTAssertTrue(waitUntil(timeout: 10) { !cancelButton.exists })
+            XCTAssertTrue(app.buttons["VoiceMicButton"].waitForExistence(timeout: 5))
+        }
+
+        XCTAssertEqual(app.state, .runningForeground, "The app should still be running after auto-start.")
+    }
+
     /// The Simulator prompts for mic/speech-recognition access on first use
     /// of `AVAudioEngine`/`SFSpeechRecognizer` -- these are system alerts
     /// outside the app's own view hierarchy, so XCUITest needs an
