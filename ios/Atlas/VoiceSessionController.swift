@@ -158,12 +158,20 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
 
     // MARK: - Session lifecycle
 
-    /// Starts a voice turn: fetches a token, connects to the room, and
-    /// begins on-device transcription. Returns `true` if listening started
-    /// successfully; `false` if it failed (`onError` has already fired with
-    /// a user-facing message).
+    /// Starts a voice turn: fetches a token, connects to the room, publishes
+    /// a one-time `context_seed` message carrying recent text-chat history
+    /// (Milestone 7.5, mode continuity/FR9 -- see `publishContextSeed(from:)`),
+    /// and begins on-device transcription. Returns `true` if listening
+    /// started successfully; `false` if it failed (`onError` has already
+    /// fired with a user-facing message).
+    ///
+    /// `priorMessages` is `ChatViewModel.messages` as of the moment the user
+    /// tapped the mic -- the same array text chat's `/chat` calls already
+    /// resend in full on every turn, so this closes the other direction of
+    /// mode continuity (voice->text already worked, since voice-obtained
+    /// turns get appended to that same shared array).
     @discardableResult
-    func startVoiceTurn(accessToken: String?) async -> Bool {
+    func startVoiceTurn(accessToken: String?, priorMessages: [ChatMessage]) async -> Bool {
         guard state == .idle || state == .stopped else { return state == .listening || state == .connecting }
         isCancelled = false
         state = .connecting
@@ -194,6 +202,11 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
             room.delegates.add(delegate: self)
             self.room = room
             try await room.connect(url: voiceToken.url, token: voiceToken.token)
+
+            // Before any real utterance can possibly be published, seed the
+            // backend's fresh voice-session LLM context with recent
+            // text-chat history -- see publishContextSeed(from:).
+            await publishContextSeed(from: priorMessages)
 
             try await transcriptionService.start()
 
@@ -503,6 +516,40 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         }
     }
 
+    /// Milestone 7.5 (mode continuity, FR9): publishes a one-time
+    /// `context_seed` data message carrying recent text-chat history, so the
+    /// backend's voice-session LLM context (seeded empty at pipeline
+    /// startup, see `app/voice_agent.py`) doesn't start from scratch when a
+    /// user switches from typing to voice mid-conversation. Filters
+    /// `priorMessages` to only `.user`/`.assistant` entries with non-nil,
+    /// non-empty (after trimming) content -- never `.system`/`.tool`,
+    /// matching the backend bridge's own role allowlist in
+    /// `app/voice_transcript_bridge.py` -- takes the most recent 20, and
+    /// publishes them via the same `room.localParticipant.publish(data:
+    /// options:)` mechanism `publish(_:)` uses for the other outgoing
+    /// message types. If nothing survives filtering (a fresh conversation
+    /// with no history yet), publishes nothing.
+    private func publishContextSeed(from priorMessages: [ChatMessage]) async {
+        let seedEntries: [ContextSeedEntry] = priorMessages.compactMap { message in
+            guard message.role == .user || message.role == .assistant else { return nil }
+            guard let content = message.content?.trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty
+            else {
+                return nil
+            }
+            return ContextSeedEntry(role: message.role.rawValue, content: content)
+        }
+        guard !seedEntries.isEmpty else { return }
+
+        let recent = Array(seedEntries.suffix(20))
+        guard let room else { return }
+        do {
+            let data = try JSONEncoder().encode(ContextSeedMessage(type: "context_seed", messages: recent))
+            try await room.localParticipant.publish(data: data, options: DataPublishOptions(reliable: true))
+        } catch {
+            onError?("Failed to send conversation context to Atlas: \(error.localizedDescription)")
+        }
+    }
+
     private func publish(_ message: VoiceDataMessage) async {
         guard let room else { return }
         do {
@@ -701,6 +748,25 @@ private struct VoiceTokenResponse: Decodable {
 private struct VoiceDataMessage: Encodable {
     let type: String
     let text: String?
+}
+
+/// Milestone 7.5 (mode continuity, FR9): one-time outgoing message carrying
+/// recent text-chat history, published right after connecting and before
+/// on-device transcription starts (see `publishContextSeed(from:)`). A
+/// second, distinct wire type from `VoiceDataMessage` above -- it carries a
+/// nested array (`messages`) rather than that struct's flat `type`/`text`
+/// shape -- but follows the exact same pattern: property names double as
+/// the JSON keys the backend's `app/voice_transcript_bridge.py` expects
+/// (`type`/`messages`/`role`/`content`), with no `keyEncodingStrategy`
+/// rewriting them.
+private struct ContextSeedMessage: Encodable {
+    let type: String
+    let messages: [ContextSeedEntry]
+}
+
+private struct ContextSeedEntry: Encodable {
+    let role: String
+    let content: String
 }
 
 private enum VoiceSessionError: LocalizedError {

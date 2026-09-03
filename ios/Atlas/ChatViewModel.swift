@@ -147,7 +147,7 @@ final class ChatViewModel: ObservableObject {
         guard voiceState == .idle else { return }
         errorMessage = nil
         liveInterimTranscript = nil
-        let started = await voiceController.startVoiceTurn(accessToken: accessToken)
+        let started = await voiceController.startVoiceTurn(accessToken: accessToken, priorMessages: messages)
         voiceState = started ? .listening : .idle
     }
 

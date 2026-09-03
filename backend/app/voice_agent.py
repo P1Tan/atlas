@@ -40,6 +40,24 @@ reminder would be spoken back confidently but never actually scheduled,
 since the voice pipeline runs tools entirely server-side and nothing
 else surfaces a tool's result to iOS.
 
+As of Milestone 7.5 (mode continuity, FR9), `app/voice_transcript_bridge.py`'s
+`LiveKitTranscriptBridge` also handles a fourth iOS-originated message type,
+`{"type": "context_seed", "messages": [...]}`, sent once right after iOS
+connects to a voice session and before any real utterance. It translates to
+an `LLMMessagesAppendFrame(messages=sanitized, run_llm=False)`, which the
+pipeline below needs no additional wiring for: `LiveKitTranscriptBridge`
+already sits between `transport.input()` and `user_aggregator`, exactly
+where an `LLMMessagesAppendFrame` needs to land to reach the context
+aggregator and be added to `context` without triggering an LLM call. This
+closes the mode-continuity gap in the other direction from 7.4's
+`LiveKitAssistantReplyBridge`/`LiveKitToolResultBridge`: those let a voice
+turn's results flow back into iOS's unified `ChatViewModel.messages`
+(voice->text always worked, since text's `/chat` calls resend the full
+array); this lets prior text-chat history flow into a voice session's
+previously-empty-at-startup LLM context (text->voice), so switching from
+typing to voice mid-conversation no longer starts the assistant's voice-side
+memory from scratch.
+
 There is no LiveKit agent auto-dispatch in Pipecat (confirmed: no such
 feature exists or is planned), so this script owns joining the room itself,
 like any other participant -- run it with `python -m app.voice_agent` while
