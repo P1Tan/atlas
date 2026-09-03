@@ -9,6 +9,7 @@ from app.extraction_pipeline import extract_events_from_text
 from app.gmail_routes import router as gmail_router
 from app.memory_routes import router as memory_router
 from app.models import Event, ExtractRequest
+from app.voice_routes import router as voice_router
 
 # Without this, every logger.info() in the app (extraction/model logging,
 # Gmail fetch counts) is silently dropped -- the root logger defaults to
@@ -23,6 +24,7 @@ app.include_router(auth_router)
 app.include_router(gmail_router)
 app.include_router(chat_router)
 app.include_router(memory_router)
+app.include_router(voice_router)
 
 
 @app.get("/health")

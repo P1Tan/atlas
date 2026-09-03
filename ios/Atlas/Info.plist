@@ -31,6 +31,10 @@
 	<string>1</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Atlas needs calendar access to add events you've confirmed from extracted emails.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Atlas uses your microphone to hear you when you talk to it.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Atlas transcribes your speech on-device to understand what you say.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

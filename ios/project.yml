@@ -8,6 +8,9 @@ packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
     from: 2.0.0
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift.git
+    from: 2.16.0
 targets:
   Atlas:
     type: application
@@ -22,6 +25,8 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         NSCalendarsFullAccessUsageDescription: "Atlas needs calendar access to add events you've confirmed from extracted emails."
+        NSMicrophoneUsageDescription: "Atlas uses your microphone to hear you when you talk to it."
+        NSSpeechRecognitionUsageDescription: "Atlas transcribes your speech on-device to understand what you say."
         CFBundleURLTypes:
           - CFBundleURLName: com.p1tan.atlas
             CFBundleURLSchemes:
@@ -38,6 +43,7 @@ targets:
       - target: AtlasShareExtension
         embed: true
       - package: Supabase
+      - package: LiveKit
   AtlasShareExtension:
     type: app-extension
     platform: iOS
