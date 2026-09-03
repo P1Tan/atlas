@@ -47,3 +47,10 @@ LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
 # you join manually via a browser test client to prove the pipeline works.
 VOICE_DEV_ROOM_NAME = os.getenv("ATLAS_VOICE_DEV_ROOM_NAME", "atlas-dev")
 VOICE_DEV_TIMEZONE = os.getenv("ATLAS_VOICE_DEV_TIMEZONE", "America/New_York")
+
+CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
+# "Henri - Express Host": Cartesia's own description is "clear, warm, and
+# efficient" -- chosen by querying Cartesia's real voice library (not
+# guessed) for the closest match to PERSONA's "warm but efficient" framing
+# in app/config.py.
+CARTESIA_VOICE_ID = os.getenv("ATLAS_CARTESIA_VOICE_ID", "d9f4af15-c402-4f50-bbda-d8823d028d6a")

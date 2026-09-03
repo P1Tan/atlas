@@ -1,7 +1,11 @@
-"""Milestone 7.1/7.2a voice pipeline scaffold -- a standalone script, NOT
+"""Milestone 7.1/7.2a/7.3 voice pipeline scaffold -- a standalone script, NOT
 part of the FastAPI server, that proves the Pipecat + LiveKit plumbing works
 end-to-end (STT -> LLM (with the same tools/persona as text chat) -> TTS)
 and gives a rough latency read. Not production voice UX.
+
+As of Milestone 7.3, TTS uses Cartesia (the committed provider, chosen
+2026-09-01 over the spec's default guess of ElevenLabs Flash for cost),
+replacing 7.1's OpenAI TTS placeholder.
 
 As of Milestone 7.2a, STT is no longer performed server-side. The iOS client
 (7.2b, on-device Apple Speech, built separately) transcribes speech itself
@@ -34,14 +38,16 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.runner.livekit import generate_token_with_agent
+from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.transports.livekit.transport import LiveKitParams, LiveKitTransport
 from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
 from app.chat import PERSONA, build_system_prompt
 from app.config import (
+    CARTESIA_API_KEY,
+    CARTESIA_VOICE_ID,
     LIVEKIT_API_KEY,
     LIVEKIT_API_SECRET,
     LIVEKIT_URL,
@@ -70,25 +76,26 @@ logger = logging.getLogger("atlas.voice")
 VOICE_DEV_USER_ID = "325c07ec-8e45-49a1-931e-d29a40ddffce"
 
 
-def _require_livekit_config() -> None:
+def _require_voice_config() -> None:
     missing = [
         name
         for name, value in (
             ("LIVEKIT_URL", LIVEKIT_URL),
             ("LIVEKIT_API_KEY", LIVEKIT_API_KEY),
             ("LIVEKIT_API_SECRET", LIVEKIT_API_SECRET),
+            ("CARTESIA_API_KEY", CARTESIA_API_KEY),
         )
         if not value
     ]
     if missing:
         raise RuntimeError(
-            "Missing required LiveKit env var(s) for the voice agent scaffold: "
+            "Missing required env var(s) for the voice agent scaffold: "
             f"{', '.join(missing)}. Set them in backend/.env (see .env.example)."
         )
 
 
 async def main() -> None:
-    _require_livekit_config()
+    _require_voice_config()
 
     token = generate_token_with_agent(
         room_name=VOICE_DEV_ROOM_NAME,
@@ -118,7 +125,10 @@ async def main() -> None:
     llm = OpenAILLMService(
         settings=OpenAILLMService.Settings(system_instruction=build_system_prompt(PERSONA))
     )
-    tts = OpenAITTSService()
+    tts = CartesiaTTSService(
+        api_key=CARTESIA_API_KEY,
+        settings=CartesiaTTSService.Settings(voice=CARTESIA_VOICE_ID, model="sonic-3.5"),
+    )
 
     # Scaffold simplification, deliberate: reference_datetime/user identity
     # are captured once at process startup, not per-turn -- unlike the text
