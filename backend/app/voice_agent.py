@@ -28,6 +28,18 @@ messages iOS sends the other direction (7.2a/7.2b). This lets iOS show the
 assistant's turn in a unified chat transcript alongside the spoken audio,
 rather than only playing it out loud.
 
+Same milestone, a second small addition:
+`app/voice_tool_result_bridge.py`'s `LiveKitToolResultBridge` (positioned
+right after `llm`, alongside `LiveKitAssistantReplyBridge`) forwards
+`set_reminder`'s tool-call result to iOS as a
+`{"type": "tool_result", "name": "set_reminder", "result": {...}}`
+message. Text chat's `/chat` response already lets
+`ChatViewModel.scheduleAnyReminders(from:)` schedule the actual on-device
+local notification client-side -- without this bridge, a voice-requested
+reminder would be spoken back confidently but never actually scheduled,
+since the voice pipeline runs tools entirely server-side and nothing
+else surfaces a tool's result to iOS.
+
 There is no LiveKit agent auto-dispatch in Pipecat (confirmed: no such
 feature exists or is planned), so this script owns joining the room itself,
 like any other participant -- run it with `python -m app.voice_agent` while
@@ -69,6 +81,7 @@ from app.extraction import get_default_extractor
 from app.memory import get_default_memory_store
 from app.tools import build_tools
 from app.voice_assistant_reply_bridge import LiveKitAssistantReplyBridge
+from app.voice_tool_result_bridge import LiveKitToolResultBridge
 from app.voice_tools import to_function_schemas
 from app.voice_transcript_bridge import LiveKitTranscriptBridge
 from app.weather import get_default_weather_client
@@ -180,6 +193,7 @@ async def main() -> None:
             LiveKitTranscriptBridge(),
             user_aggregator,
             llm,
+            LiveKitToolResultBridge(),
             LiveKitAssistantReplyBridge(),
             tts,
             transport.output(),
