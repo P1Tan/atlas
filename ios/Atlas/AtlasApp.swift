@@ -23,6 +23,8 @@ struct AtlasApp: App {
                 .onOpenURL { url in
                     if url.host == "login-callback" {
                         Task { await authViewModel.handle(url: url) }
+                    } else if url.host == "listen" {
+                        launchCoordinator.triggerVoiceFromWidget()
                     } else {
                         shareInbox.handle(url: url)
                     }

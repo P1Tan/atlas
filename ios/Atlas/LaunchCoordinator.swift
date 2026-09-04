@@ -16,6 +16,14 @@ import Foundation
 final class LaunchCoordinator: ObservableObject {
     private var hasAutoStarted = false
 
+    /// Milestone 8.2 (FR11, home-screen widget): fired each time
+    /// `atlas://listen` arrives (widget tap, whether that cold-launches the
+    /// app or just foregrounds an already-running one). A `UUID`, not a
+    /// `Bool`, because a second widget tap while the app is already running
+    /// must still be observable as a new event -- a `Bool` that's already
+    /// `true` wouldn't trigger `onChange` again.
+    @Published var widgetVoiceTrigger: UUID?
+
     /// Returns `true` exactly once per app process launch. Every subsequent
     /// call -- including after backgrounding/foregrounding, or switching
     /// tabs away from and back to Chat -- returns `false`, so this only
@@ -25,5 +33,15 @@ final class LaunchCoordinator: ObservableObject {
         guard !hasAutoStarted else { return false }
         hasAutoStarted = true
         return true
+    }
+
+    /// A cold launch via the widget also passes through
+    /// `consumeShouldAutoStartVoice()` above (Chat is always the default
+    /// tab), so this only does independent work when the app was already
+    /// running -- `ChatViewModel.startVoiceTurn`'s own idle-state/
+    /// reentrancy guards (Milestone 8.1) make firing both harmless even
+    /// when they do overlap on a cold launch.
+    func triggerVoiceFromWidget() {
+        widgetVoiceTrigger = UUID()
     }
 }

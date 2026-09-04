@@ -20,6 +20,7 @@ private struct MainTabView: View {
     @StateObject private var healthChecker = HealthChecker()
     @EnvironmentObject private var shareInbox: ShareInbox
     @EnvironmentObject private var authViewModel: AuthViewModel
+    @EnvironmentObject private var launchCoordinator: LaunchCoordinator
     @State private var selectedTab: AtlasTab = .chat
     @State private var showingSignOutConfirmation = false
 
@@ -85,6 +86,13 @@ private struct MainTabView: View {
         .onChange(of: shareInbox.pendingText) { _, newValue in
             guard newValue != nil else { return }
             selectedTab = .email
+        }
+        // Milestone 8.2: a widget tap while on another tab should surface
+        // the listening UI it just triggered, not leave the user looking at
+        // an unrelated screen with no visible sign anything happened.
+        .onChange(of: launchCoordinator.widgetVoiceTrigger) { _, newValue in
+            guard newValue != nil else { return }
+            selectedTab = .chat
         }
     }
 }

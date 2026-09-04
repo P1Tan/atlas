@@ -110,6 +110,32 @@ struct ChatView: View {
             let accessToken = await authViewModel.currentAccessToken()
             await viewModel.startVoiceTurn(accessToken: accessToken)
         }
+        // Milestone 8.2: the widget deep-link's own trigger, distinct from
+        // the cold-launch `.task` above -- this fires on EVERY widget tap,
+        // including ones where the app was already running (the `.task`
+        // above only ever fires once, on a genuine cold open).
+        // `ChatViewModel.startVoiceTurn`'s own idle-state/reentrancy guards
+        // make it safe if both happen to fire for the same cold launch.
+        .onChange(of: launchCoordinator.widgetVoiceTrigger) { _, newValue in
+            guard newValue != nil else { return }
+            Task {
+                let accessToken = await authViewModel.currentAccessToken()
+                await viewModel.startVoiceTurn(accessToken: accessToken)
+            }
+        }
+        // A widget tap that arrives before this view is mounted -- e.g.
+        // during the async auth bootstrap window on a cold launch, before
+        // ContentView has switched from SignInView to MainTabView -- would
+        // otherwise be silently dropped: `onChange` above only fires on a
+        // transition AFTER it attaches, not for whatever value is already
+        // current at mount time. Mirrors the same fix PasteInputView
+        // already applies for ShareInbox.pendingText's identical
+        // mount-timing race (Milestone 4.2).
+        .task {
+            guard launchCoordinator.widgetVoiceTrigger != nil else { return }
+            let accessToken = await authViewModel.currentAccessToken()
+            await viewModel.startVoiceTurn(accessToken: accessToken)
+        }
     }
 
     /// The status/controls area shown above the input bar while a voice turn
