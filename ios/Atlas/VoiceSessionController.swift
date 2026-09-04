@@ -317,7 +317,18 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         awaitingReplyTimeoutTask?.cancel()
         awaitingReplyTimeoutTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64((self?.awaitingReplyTimeout ?? 30) * 1_000_000_000))
-            guard let self, !Task.isCancelled else { return }
+            guard let self, !Task.isCancelled, self.state == .awaitingReply else { return }
+            // Milestone 9.1 (NFR2): this timeout firing while still
+            // `.awaitingReply` means total silence -- no `pipeline_error`
+            // message arrived either (that path calls
+            // `finishVoiceSessionAfterReply()` directly and tears the room
+            // down, which cancels this task before it ever gets here), so
+            // nothing has told the user what happened yet. Used to revert to
+            // idle with zero explanation, a silent hang bounded only by this
+            // 30s timeout rather than one that actually surfaces anything.
+            if !(self.replyTextReceived && self.replyAudioFinished) {
+                self.onError?("Atlas didn't reply in time. Please try again.")
+            }
             await self.finishVoiceSessionAfterReply()
         }
     }
@@ -612,6 +623,22 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         case "tool_result":
             guard let message = try? Self.responseDecoder.decode(ToolResultMessage.self, from: data) else { return }
             onToolResult?(message)
+        case "pipeline_error":
+            guard let message = try? Self.responseDecoder.decode(PipelineErrorMessage.self, from: data) else { return }
+            // Guarded on .awaitingReply, mirroring scheduleAwaitingReplyTimeout's
+            // own guard: a message delivered late (after a local timeout
+            // already surfaced its own error and started tearing the room
+            // down) must not overwrite errorMessage with a second, redundant
+            // one -- errorMessage is a plain last-write-wins property, not
+            // scoped per-turn.
+            guard state == .awaitingReply else { return }
+            // No reply is coming for this turn -- surface it immediately
+            // rather than leaving the user staring at "thinking…" for the
+            // full 30s `awaitingReplyTimeout` safety net. That net still
+            // fires and ends the turn if this message never arrives at all
+            // (e.g. the backend process itself is down).
+            onError?(message.message)
+            Task { await self.finishVoiceSessionAfterReply() }
         default:
             break
         }

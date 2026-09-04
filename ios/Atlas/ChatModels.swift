@@ -96,3 +96,22 @@ struct ToolResultMessage: Decodable {
     let name: String
     let result: SetReminderToolResult
 }
+
+/// Backend -> iOS voice message (Milestone 9.1, NFR2 reliability): sent when
+/// the voice pipeline hits an error it can't recover from on its own (e.g.
+/// the LLM/TTS provider call itself fails -- not a tool call failing, which
+/// the model already explains gracefully in a normal `assistant_reply`).
+/// `message` is a fixed, generic, non-leaky string -- never the raw
+/// exception text, which could contain internal provider/error detail.
+/// Decoded by `VoiceSessionController`.
+///
+/// No UI-test coverage for this decode path, matching the rest of
+/// `VoiceSessionController` (no unit-test target exists for it): reaching
+/// `.awaitingReply` at all needs a real voice turn, which needs real mic
+/// input the Simulator can't provide (assistant-spec.md §18). Live-verified
+/// instead against the real backend (see PROGRESS.md's 9.1 entry) --
+/// intentional, not an oversight.
+struct PipelineErrorMessage: Decodable {
+    let type: String
+    let message: String
+}

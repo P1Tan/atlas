@@ -58,6 +58,22 @@ previously-empty-at-startup LLM context (text->voice), so switching from
 typing to voice mid-conversation no longer starts the assistant's voice-side
 memory from scratch.
 
+As of Milestone 9.1 (NFR2, reliability), a provider-level pipeline failure
+(the LLM or TTS API call itself failing -- rate limit, quota, connectivity,
+etc.) is no longer silent. Pipecat's own services already push an
+`ErrorFrame` upstream when this happens (confirmed via the installed source,
+`services/openai/base_llm.py`); `worker.event_handler("on_pipeline_error")`
+below catches it and forwards a fixed, generic
+`{"type": "pipeline_error", "message": "..."}` message to iOS -- distinct
+from a tool call failing (`ErrorCategory.APPLICATION`), which Pipecat's own
+function-call runner already recovers from gracefully (feeds a synthetic
+error result back to the model, which explains it in a normal
+`assistant_reply`) and this handler deliberately ignores. Before this,
+a provider failure meant total silence from the backend: iOS had no way to
+know anything had gone wrong until its own 30s client-side safety net
+(`VoiceSessionController.awaitingReplyTimeout`) gave up and reverted to idle
+with no explanation -- exactly the "silent hang" NFR2 rules out.
+
 There is no LiveKit agent auto-dispatch in Pipecat (confirmed: no such
 feature exists or is planned), so this script owns joining the room itself,
 like any other participant -- run it with `python -m app.voice_agent` while
@@ -71,6 +87,7 @@ import logging
 from datetime import datetime
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.frames.frames import ErrorFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker, ProcessorUnusablePolicy
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -81,7 +98,11 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.runner.livekit import generate_token_with_agent
 from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.transports.livekit.transport import LiveKitParams, LiveKitTransport
+from pipecat.transports.livekit.transport import (
+    LiveKitOutputTransportMessageUrgentFrame,
+    LiveKitParams,
+    LiveKitTransport,
+)
 from pipecat.turns.user_turn_strategies import ExternalUserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
@@ -99,6 +120,7 @@ from app.extraction import get_default_extractor
 from app.memory import get_default_memory_store
 from app.tools import build_tools
 from app.voice_assistant_reply_bridge import LiveKitAssistantReplyBridge
+from app.voice_pipeline_error_bridge import pipeline_error_notification
 from app.voice_tool_result_bridge import LiveKitToolResultBridge
 from app.voice_tools import to_function_schemas
 from app.voice_transcript_bridge import LiveKitTranscriptBridge
@@ -224,6 +246,17 @@ async def main() -> None:
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
         processor_unusable_policy=ProcessorUnusablePolicy.END,
     )
+
+    @worker.event_handler("on_pipeline_error")
+    async def _on_pipeline_error(worker: PipelineWorker, frame: ErrorFrame) -> None:
+        notification = pipeline_error_notification(frame)
+        if notification is None:
+            return
+        logger.error("voice pipeline error (category=%s): %s", frame.category, frame.error)
+        # queue_frame pushes from the beginning of the pipeline; the Urgent
+        # variant is a SystemFrame, sent immediately rather than queued
+        # behind whatever's jammed given the pipeline just errored.
+        await worker.queue_frame(LiveKitOutputTransportMessageUrgentFrame(message=notification))
 
     runner = WorkerRunner()
     await runner.add_workers(worker)
