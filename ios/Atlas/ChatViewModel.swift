@@ -122,10 +122,20 @@ final class ChatViewModel: ObservableObject {
                 return
             }
             guard http.statusCode == 200 else {
-                errorMessage =
-                    http.statusCode == 401
-                    ? "Your session expired. Please sign in again."
-                    : "Chat failed (server returned \(http.statusCode))."
+                switch http.statusCode {
+                case 401:
+                    errorMessage = "Your session expired. Please sign in again."
+                case 429:
+                    // Milestone 9.3: the backend's two distinct 429 cases
+                    // (burst rate limit vs. daily usage cap) already carry
+                    // a specific, actionable `detail` message -- surface
+                    // that rather than collapsing both into one generic
+                    // string, falling back only if the body doesn't decode.
+                    errorMessage = Self.decodeErrorDetail(from: data)
+                        ?? "You're sending messages too quickly. Please wait a moment and try again."
+                default:
+                    errorMessage = "Chat failed (server returned \(http.statusCode))."
+                }
                 return
             }
 
@@ -253,5 +263,13 @@ final class ChatViewModel: ObservableObject {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.string(from: date)
+    }
+
+    /// FastAPI's `HTTPException(detail: ...)` shape (`{"detail": "..."}`).
+    /// `nil` on any decode failure -- callers fall back to a generic message
+    /// rather than surfacing a decode error for what's already an error.
+    private static func decodeErrorDetail(from data: Data) -> String? {
+        struct ErrorBody: Decodable { let detail: String }
+        return try? JSONDecoder().decode(ErrorBody.self, from: data).detail
     }
 }

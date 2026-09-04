@@ -7,6 +7,7 @@ from app.config import PERSONA
 from app.extraction import ExtractedEventDraft, get_extractor
 from app.main import app
 from app.memory import get_memory_store
+from app.rate_limit import RateLimiter, get_chat_rate_limiter
 from app.supabase_client import AuthenticatedUser, get_current_user
 from app.weather import get_weather_client
 from app.web_search import SearchResponse, get_web_search_client
@@ -206,6 +207,25 @@ def test_chat_returns_502_when_engine_fails() -> None:
     response = client.post("/chat", json=_request([ChatMessage(role="user", content="hi")]))
 
     assert response.status_code == 502
+
+
+def test_chat_returns_429_once_the_rate_limit_is_exceeded() -> None:
+    """Confirms enforce_chat_rate_limit is actually wired into the route
+    (not just present in app.rate_limit) -- a tiny override limiter, not the
+    real 20/min default, so the test doesn't need 21 requests to prove it."""
+    app.dependency_overrides[get_chat_engine] = lambda: FakeChatEngine()
+    # The SAME instance for every dependency resolution -- a lambda that
+    # constructs a fresh RateLimiter each call (dependency_overrides invokes
+    # its replacement fresh per request, not just once per test) would give
+    # each request its own empty deques and never actually accumulate state.
+    limiter = RateLimiter(per_window_limit=1, window_seconds=60, daily_limit=100)
+    app.dependency_overrides[get_chat_rate_limiter] = lambda: limiter
+
+    first = client.post("/chat", json=_request([ChatMessage(role="user", content="hi")]))
+    second = client.post("/chat", json=_request([ChatMessage(role="user", content="hi again")]))
+
+    assert first.status_code == 200
+    assert second.status_code == 429
 
 
 def test_chat_wires_up_the_registered_tools() -> None:

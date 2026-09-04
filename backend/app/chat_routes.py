@@ -9,6 +9,7 @@ from app.chat import ChatEngine, ChatMessage, build_system_prompt, get_chat_engi
 from app.config import PERSONA
 from app.extraction import EventExtractor, get_extractor
 from app.memory import MemoryStore, get_memory_store
+from app.rate_limit import enforce_chat_rate_limit
 from app.supabase_client import AuthenticatedUser, get_current_user
 from app.tools import build_tools
 from app.weather import WeatherClient, get_weather_client
@@ -33,6 +34,7 @@ class ChatResponse(BaseModel):
 def chat(
     request: ChatRequest,
     user: AuthenticatedUser = Depends(get_current_user),
+    _rate_limit: None = Depends(enforce_chat_rate_limit),
     engine: ChatEngine = Depends(get_chat_engine),
     extractor: EventExtractor = Depends(get_extractor),
     weather_client: WeatherClient = Depends(get_weather_client),

@@ -54,3 +54,15 @@ CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
 # guessed) for the closest match to PERSONA's "warm but efficient" framing
 # in app/config.py.
 CARTESIA_VOICE_ID = os.getenv("ATLAS_CARTESIA_VOICE_ID", "d9f4af15-c402-4f50-bbda-d8823d028d6a")
+
+# Milestone 9.3 (cost/abuse guardrails, spec §18): per-user limits so a bug
+# or abuse can't run up the bill, not precisely-tuned business numbers --
+# generous enough for real interactive use, bounded enough to cap worst-case
+# exposure. /chat is one call per user-sent message; /voice/token mints a
+# fresh token per voice turn (VoiceSessionController fetches one at the start
+# of every startVoiceTurn(), not once per app session), so its per-minute
+# ceiling needs more headroom than /chat's despite gating a cheaper call.
+CHAT_RATE_LIMIT_PER_MINUTE = int(os.getenv("ATLAS_CHAT_RATE_LIMIT_PER_MINUTE", "20"))
+CHAT_DAILY_USAGE_CAP = int(os.getenv("ATLAS_CHAT_DAILY_USAGE_CAP", "300"))
+VOICE_TOKEN_RATE_LIMIT_PER_MINUTE = int(os.getenv("ATLAS_VOICE_TOKEN_RATE_LIMIT_PER_MINUTE", "30"))
+VOICE_TOKEN_DAILY_USAGE_CAP = int(os.getenv("ATLAS_VOICE_TOKEN_DAILY_USAGE_CAP", "500"))

@@ -18,6 +18,7 @@ from livekit import api
 from pydantic import BaseModel
 
 from app.config import LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL, VOICE_DEV_ROOM_NAME
+from app.rate_limit import enforce_voice_token_rate_limit
 from app.supabase_client import AuthenticatedUser, get_current_user
 
 logger = logging.getLogger("atlas.voice")
@@ -32,7 +33,10 @@ class VoiceTokenResponse(BaseModel):
 
 
 @router.post("/token", response_model=VoiceTokenResponse)
-def create_voice_token(user: AuthenticatedUser = Depends(get_current_user)) -> VoiceTokenResponse:
+def create_voice_token(
+    user: AuthenticatedUser = Depends(get_current_user),
+    _rate_limit: None = Depends(enforce_voice_token_rate_limit),
+) -> VoiceTokenResponse:
     if not (LIVEKIT_URL and LIVEKIT_API_KEY and LIVEKIT_API_SECRET):
         raise HTTPException(status_code=503, detail="voice pipeline not configured")
 

@@ -149,6 +149,14 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         return decoder
     }()
 
+    /// FastAPI's `HTTPException(detail: ...)` shape (`{"detail": "..."}`).
+    /// `nil` on any decode failure -- callers fall back to a generic message
+    /// rather than surfacing a decode error for what's already an error.
+    private static func decodeErrorDetail(from data: Data) -> String? {
+        struct ErrorBody: Decodable { let detail: String }
+        return try? JSONDecoder().decode(ErrorBody.self, from: data).detail
+    }
+
     // MARK: - Audio session interruption / route-change handling (Milestone 9.2, §11)
 
     private var interruptionObserver: NSObjectProtocol?
@@ -744,11 +752,20 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
             throw VoiceSessionError.tokenFetchFailed("No response from server.")
         }
         guard http.statusCode == 200 else {
-            throw VoiceSessionError.tokenFetchFailed(
-                http.statusCode == 401
-                    ? "Your session expired. Please sign in again."
-                    : "Failed to start a voice session (server returned \(http.statusCode))."
-            )
+            let message: String
+            switch http.statusCode {
+            case 401:
+                message = "Your session expired. Please sign in again."
+            case 429:
+                // Milestone 9.3: mirrors ChatViewModel's identical handling
+                // -- surface the backend's specific detail (burst vs. daily
+                // cap) rather than a generic message.
+                message = Self.decodeErrorDetail(from: data)
+                    ?? "Too many voice sessions started -- please wait a moment and try again."
+            default:
+                message = "Failed to start a voice session (server returned \(http.statusCode))."
+            }
+            throw VoiceSessionError.tokenFetchFailed(message)
         }
         return try Self.responseDecoder.decode(VoiceTokenResponse.self, from: data)
     }
