@@ -4,6 +4,18 @@ options:
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
+# Real code signing (added once a physical device came into the picture --
+# no Apple Developer account existed on this machine before, hence every
+# target's own CODE_SIGNING_ALLOWED: NO below). A free personal team is
+# enough for on-device testing (Peter Tan (Personal Team), no paid Developer
+# Program needed for this app -- no push notifications/App Groups/other
+# capability that would require one). Project-level so every target
+# inherits it without repeating the same three lines four times; still
+# works unchanged for Simulator builds -- this is the default state of a
+# completely normal Xcode project, not Simulator-vs-device-conditional.
+settings:
+  base:
+    DEVELOPMENT_TEAM: 893CXP2LVF
 packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
@@ -37,8 +49,6 @@ targets:
         SWIFT_VERSION: 5.0
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_ALLOWED: NO
     dependencies:
       - target: AtlasShareExtension
         embed: true
@@ -68,8 +78,6 @@ targets:
         SWIFT_VERSION: 5.0
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_ALLOWED: NO
         SKIP_INSTALL: YES
   AtlasWidget:
     type: app-extension
@@ -89,8 +97,6 @@ targets:
         SWIFT_VERSION: 5.0
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_ALLOWED: NO
         SKIP_INSTALL: YES
   AtlasUITests:
     type: bundle.ui-testing
@@ -103,8 +109,12 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.p1tan.atlas.uitests
         SWIFT_VERSION: 5.0
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGNING_REQUIRED: NO
-        CODE_SIGNING_ALLOWED: NO
+        # No custom Info.plist content needed (no permissions/URL schemes of
+        # its own) -- only surfaced as a real gap once code signing was
+        # actually enabled (real device support): codesign requires SOME
+        # Info.plist to exist even for a UI test bundle, which
+        # CODE_SIGNING_ALLOWED: NO had been silently masking until now.
+        GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: Atlas
 schemes:
