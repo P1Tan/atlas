@@ -30,4 +30,25 @@ final class SignInUITests: XCTestCase {
 
         XCTAssertTrue(sendButton.isEnabled)
     }
+
+    /// Milestone 9.2 (NFR4 / spec §14): the app must be explicit that
+    /// text/voice is processed by third-party providers -- this is the one
+    /// place that disclosure lives, so it must actually be visible on the
+    /// screen every signed-out user sees first, not just present in source.
+    func testDataUsageDisclosureIsVisibleOnSignIn() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["ATLAS_TEST_FORCE_SIGNED_OUT"] = "1"
+        app.launch()
+
+        let disclosure = app.staticTexts["DataUsageDisclosure"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5))
+        // .isHittable, not just .exists -- SignInView has no ScrollView, so
+        // confirm this is genuinely on-screen and unclipped, not merely
+        // present in the accessibility hierarchy (this codebase has hit a
+        // real zero-height/clipped-content bug in an unscrolled screen
+        // before).
+        XCTAssertTrue(disclosure.isHittable)
+        XCTAssertTrue(disclosure.label.contains("OpenAI"))
+        XCTAssertTrue(disclosure.label.contains("Cartesia"))
+    }
 }

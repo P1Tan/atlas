@@ -74,6 +74,35 @@ struct SignInView: View {
                     .accessibilityIdentifier("SignInErrorMessage")
             }
 
+            // Milestone 9.2 (NFR4 / spec §14): a persistent, always-visible
+            // disclosure -- not a one-time onboarding modal a user taps past
+            // and never sees again -- mirroring the same caption pattern
+            // PasteInputView already uses for its Gmail-specific disclosure
+            // (Milestone 3.3). This is the general one, since it applies to
+            // every message/utterance, not one connected feature.
+            //
+            // Security review finding: an earlier draft's sentence structure
+            // scoped OpenAI's role narrowly to "generate responses," which
+            // could read as excluding remembered facts -- but remember_fact/
+            // search_facts also send fact text to OpenAI's embeddings API,
+            // both when a memory is stored and on every later recall.
+            // Reworded so "messages and memories" are grouped as one clause
+            // OpenAI processes, distinct from Cartesia's narrower TTS-only
+            // role. "Encrypted at rest" (not just "encrypted") deliberately
+            // uses the same precise term the spec's own NFR4 does -- true of
+            // Supabase's storage layer, not a claim that Atlas's own backend
+            // can't read stored facts (it has to, to search/display them).
+            Text(
+                "Your messages and memories are processed by OpenAI, and voice replies are spoken by "
+                    + "Cartesia. Voice is transcribed on your device -- only the text is sent. Stored "
+                    + "memories are encrypted at rest and yours to view or delete anytime."
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal)
+            .accessibilityIdentifier("DataUsageDisclosure")
+
             Spacer()
             Spacer()
         }

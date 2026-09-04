@@ -149,10 +149,129 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         return decoder
     }()
 
+    // MARK: - Audio session interruption / route-change handling (Milestone 9.2, §11)
+
+    private var interruptionObserver: NSObjectProtocol?
+    private var routeChangeObserver: NSObjectProtocol?
+    /// Guards `endActiveSessionForInterruption` against firing twice for one
+    /// real-world event -- a phone call can plausibly trigger both
+    /// `interruptionNotification` and a `.oldDeviceUnavailable` route change
+    /// in quick succession.
+    private var isEndingSessionForInterruption = false
+
     override init() {
         super.init()
         replayRenderer.onFrame = { [weak self] in
             Task { @MainActor in self?.audioFrameReceived() }
+        }
+        observeAudioSessionEvents()
+    }
+
+    deinit {
+        if let interruptionObserver {
+            NotificationCenter.default.removeObserver(interruptionObserver)
+        }
+        if let routeChangeObserver {
+            NotificationCenter.default.removeObserver(routeChangeObserver)
+        }
+    }
+
+    /// Registered once for this controller's whole lifetime (it's owned by
+    /// `ChatViewModel`, which effectively lives as long as the app does),
+    /// rather than per-turn -- simpler than trying to add/remove precisely
+    /// around each `startVoiceTurn()`/teardown, and there's nothing to react
+    /// to while idle anyway (`endActiveSessionForInterruption` checks `state`
+    /// and no-ops if there's nothing active).
+    ///
+    /// LiveKit's own `AudioSessionEngineObserver` (confirmed via the
+    /// installed SDK source) configures the session category/mode/Bluetooth
+    /// routing automatically whenever the room's audio engine is enabled,
+    /// and WebRTC's underlying audio unit has its own internal interruption
+    /// handling to keep itself consistent at the hardware level -- but
+    /// neither surfaces an app-observable signal that anything happened
+    /// (`RoomDelegate` has no interruption/route-change callback). Without
+    /// this, a phone call or headphone disconnect mid-turn would leave the
+    /// UI stuck showing "Listening…"/"Thinking…" indefinitely with no
+    /// explanation -- exactly the silent-hang failure mode Milestone 9.1
+    /// closed for pipeline errors, just for a different trigger.
+    private func observeAudioSessionEvents() {
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard
+                let typeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                AVAudioSession.InterruptionType(rawValue: typeValue) == .began
+            else { return }
+            Task { @MainActor in
+                self?.endActiveSessionForInterruption(
+                    reason: "Your voice session was interrupted (e.g. a phone call). Tap the mic to start again."
+                )
+            }
+        }
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            // .oldDeviceUnavailable specifically -- e.g. AirPods disconnecting
+            // mid-conversation, falling back to the speaker. Other reasons
+            // (a new device becoming available, category/override changes
+            // LiveKit itself makes) aren't disruptive enough to end the turn
+            // over, and reacting to every route change would be noisy for no
+            // benefit.
+            guard
+                let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                AVAudioSession.RouteChangeReason(rawValue: reasonValue) == .oldDeviceUnavailable
+            else { return }
+            Task { @MainActor in
+                self?.endActiveSessionForInterruption(
+                    reason: "Audio output changed (e.g. headphones disconnected). Tap the mic to start again."
+                )
+            }
+        }
+    }
+
+    /// Ends whatever's currently active -- a live voice turn, a reply still
+    /// being awaited, or local replay playback -- with a clear explanation,
+    /// rather than leaving any of them stuck. Deliberately does not attempt
+    /// to resume automatically once the interruption ends: per the spec's
+    /// own mic-launch-guard reasoning (an unmistakable indicator + instant
+    /// cancel, never a surprise recording), silently resuming a mic-capture
+    /// session after e.g. a phone call ends would be the same class of
+    /// surprise the guard exists to prevent -- ending cleanly and letting
+    /// the user deliberately tap the mic again is the safer default.
+    private func endActiveSessionForInterruption(reason: String) {
+        guard !isEndingSessionForInterruption else { return }
+        if playbackEngine != nil {
+            stopLocalPlayback()
+            onPlaybackStopped?()
+        }
+        switch state {
+        case .listening, .connecting:
+            // isEndingSessionForInterruption (not `state` itself --
+            // `cancelVoiceTurn()`'s own entry guard requires seeing
+            // `.listening`/`.connecting` unchanged when it runs, so this
+            // can't reuse the `.stopping` transitional-state trick
+            // `cancelVoiceTurn()` uses internally) guards against a
+            // near-simultaneous second notification (e.g. a real phone call
+            // can plausibly fire both `interruptionNotification` and a
+            // `.oldDeviceUnavailable` route change in quick succession)
+            // also matching this branch and surfacing a second, redundant
+            // error message before the first `cancelVoiceTurn()` call has
+            // actually run.
+            isEndingSessionForInterruption = true
+            onError?(reason)
+            Task {
+                await self.cancelVoiceTurn()
+                self.isEndingSessionForInterruption = false
+            }
+        case .awaitingReply:
+            isEndingSessionForInterruption = true
+            onError?(reason)
+            Task {
+                await self.finishVoiceSessionAfterReply()
+                self.isEndingSessionForInterruption = false
+            }
+        case .idle, .stopping, .stopped:
+            break
         }
     }
 
@@ -391,7 +510,41 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
     func replayLastReply() {
         guard let format = lastReplyBuffers.first?.format, !lastReplyBuffers.isEmpty else { return }
 
+        // Milestone 9.2 review finding: Replay is reachable from the
+        // `.speaking` UI state, which begins the moment the LIVE reply
+        // starts streaming in -- not only after it finishes -- so the live
+        // LiveKit track can still be audible when this runs. Mute it first
+        // (mirroring stopPlayback()'s own handling of the same track)
+        // before reassigning the shared AVAudioSession and starting a
+        // second, local playback engine, so the two don't overlap/contend.
+        currentAudioTrack?.volume = 0
+
         stopLocalPlayback()
+
+        // Milestone 9.2 (§11), corrected after code review: the ORIGINAL
+        // version of this fix assumed replay always runs after the room has
+        // disconnected, but Replay is reachable from the `.speaking` UI
+        // state, which begins on the very first LIVE reply frame -- `room`
+        // can still be non-nil and LiveKit's own AudioSessionEngineObserver
+        // can still own an active `.playAndRecord` session at this point.
+        // Reassigning the category out from under it here would fight
+        // LiveKit's own session ownership and could glitch the live track.
+        // Only reconfigure when the room is genuinely gone (`room == nil`,
+        // i.e. LiveKit no longer needs the session for anything) -- that's
+        // the only situation where the session could have been deactivated/
+        // reset to a silent-switch-obeying default in the first place. If
+        // the room is still connected, LiveKit's already-active
+        // `.playAndRecord` session plays a second local AVAudioEngine's
+        // output through it just fine with no reconfiguration needed.
+        if room == nil {
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback)
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch {
+                onError?("Could not replay the last reply: \(error.localizedDescription)")
+                return
+            }
+        }
 
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
@@ -421,10 +574,20 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
     }
 
     private func stopLocalPlayback() {
+        guard playbackEngine != nil else { return }
         playbackPlayerNode?.stop()
         playbackEngine?.stop()
         playbackPlayerNode = nil
         playbackEngine = nil
+        // Symmetric with replayLastReply()'s own room == nil guard: only
+        // deactivate if the room is genuinely gone. If it's still connected,
+        // this playback never activated the session itself (replayLastReply
+        // skipped that when the room was present), and deactivating it here
+        // would instead pull the session out from under LiveKit's own still-
+        // live track.
+        if room == nil {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     private func finishLocalPlayback() {
