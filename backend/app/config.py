@@ -49,11 +49,17 @@ VOICE_DEV_ROOM_NAME = os.getenv("ATLAS_VOICE_DEV_ROOM_NAME", "atlas-dev")
 VOICE_DEV_TIMEZONE = os.getenv("ATLAS_VOICE_DEV_TIMEZONE", "America/New_York")
 
 CARTESIA_API_KEY = os.getenv("CARTESIA_API_KEY", "")
-# "Henri - Express Host": Cartesia's own description is "clear, warm, and
-# efficient" -- chosen by querying Cartesia's real voice library (not
-# guessed) for the closest match to PERSONA's "warm but efficient" framing
-# in app/config.py.
-CARTESIA_VOICE_ID = os.getenv("ATLAS_CARTESIA_VOICE_ID", "d9f4af15-c402-4f50-bbda-d8823d028d6a")
+# "Daniel - Modern Assistant": swapped from the original "Henri - Express
+# Host" (7.3) after live real-device testing -- Henri turned out to read as
+# French-accented, not the "standard American accent" wanted. Chosen by
+# querying Cartesia's real voice library again, this time checking the
+# structured `accents` field directly (`{"accent": "general-american",
+# "locale": "en-US", "is_native": true}`), not just the free-text
+# description the original pick relied on -- confirms the accent for real
+# rather than inferring it from wording. Description "Clear, crisp male
+# voice for digital assistants and system interactions" also matches the
+# persona framing well.
+CARTESIA_VOICE_ID = os.getenv("ATLAS_CARTESIA_VOICE_ID", "47c38ca4-5f35-497b-b1a3-415245fb35e1")
 
 # Milestone 9.3 (cost/abuse guardrails, spec §18): per-user limits so a bug
 # or abuse can't run up the bill, not precisely-tuned business numbers --
@@ -66,3 +72,21 @@ CHAT_RATE_LIMIT_PER_MINUTE = int(os.getenv("ATLAS_CHAT_RATE_LIMIT_PER_MINUTE", "
 CHAT_DAILY_USAGE_CAP = int(os.getenv("ATLAS_CHAT_DAILY_USAGE_CAP", "300"))
 VOICE_TOKEN_RATE_LIMIT_PER_MINUTE = int(os.getenv("ATLAS_VOICE_TOKEN_RATE_LIMIT_PER_MINUTE", "30"))
 VOICE_TOKEN_DAILY_USAGE_CAP = int(os.getenv("ATLAS_VOICE_TOKEN_DAILY_USAGE_CAP", "500"))
+# Found live (bug audit): /facts is authenticated (same as /chat and
+# /voice/token) but had no rate limiting at all -- doesn't hit a paid
+# LLM/embedding API the way those two do, but still allows unlimited-request
+# hammering of the user_facts table by a single caller. Generous relative to
+# /chat's limits (a cheap DB read/delete, not an LLM call), still bounded.
+FACTS_RATE_LIMIT_PER_MINUTE = int(os.getenv("ATLAS_FACTS_RATE_LIMIT_PER_MINUTE", "60"))
+FACTS_DAILY_USAGE_CAP = int(os.getenv("ATLAS_FACTS_DAILY_USAGE_CAP", "2000"))
+# /gmail/candidates is the most expensive endpoint per call in the app: one
+# LLM extraction per unread message, up to max_results (hard-capped at 20,
+# the iOS client asks for 10), and a real check has been measured at ~60s
+# for 9 messages. So the useful per-minute number is small -- a user simply
+# cannot consume inbox checks faster than this by hand, and anything above
+# it is a retry loop. Daily cap bounds the worst case at ~100 checks * 20
+# messages = 2000 extractions, far beyond any plausible real day's use.
+GMAIL_CANDIDATES_RATE_LIMIT_PER_MINUTE = int(
+    os.getenv("ATLAS_GMAIL_CANDIDATES_RATE_LIMIT_PER_MINUTE", "5")
+)
+GMAIL_CANDIDATES_DAILY_USAGE_CAP = int(os.getenv("ATLAS_GMAIL_CANDIDATES_DAILY_USAGE_CAP", "100"))

@@ -19,7 +19,7 @@ struct SignInView: View {
                         .foregroundStyle(.secondary)
                     Text("Check your email")
                         .font(.headline)
-                    Text("We sent a sign-in link to \(email). Tap it to continue.")
+                    Text("We sent a sign-in link to \(email.trimmingCharacters(in: .whitespacesAndNewlines)). Tap it to continue.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

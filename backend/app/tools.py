@@ -5,16 +5,32 @@ from app.chat import ToolDefinition
 from app.date_resolution import resolve_date_phrase
 from app.extraction import EventExtractor
 from app.extraction_pipeline import extract_events_from_text
-from app.memory import MemoryStore
+from app.memory import MAX_FACT_LENGTH, MemoryStore
 from app.weather import WeatherClient
 from app.web_search import WebSearchClient
+
+
+_MAX_EXTRACT_TOOL_TEXT_CHARS = 20_000
 
 
 def _build_email_to_calendar_tool(
     reference_datetime: datetime, timezone: str, extractor: EventExtractor
 ) -> ToolDefinition:
     def handler(arguments: Dict[str, Any]) -> Dict[str, Any]:
-        events = extract_events_from_text(arguments["text"], reference_datetime, timezone, extractor)
+        # Found live (bug audit): unlike every other text-ingestion path in
+        # the app (models.ExtractRequest.text, gmail_client's own
+        # MAX_BODY_CHARS, voice_transcript_bridge's per-message cap), this
+        # argument had no size bound at all -- reaching this same
+        # extract_events_from_text() call /extract itself was already
+        # capped for (unbounded input -> arbitrarily expensive OpenAI
+        # calls), just one hop removed via a model-constructed tool call
+        # instead of a direct request body. Truncated, not rejected --
+        # matches gmail_client.py's own handling of the same "email body
+        # text, naturally long" content, rather than /extract's own
+        # top-level request field (a raw client submission, where rejecting
+        # and letting the client resubmit trimmed makes more sense).
+        text = arguments["text"][:_MAX_EXTRACT_TOOL_TEXT_CHARS]
+        events = extract_events_from_text(text, reference_datetime, timezone, extractor)
         return {"events": [event.model_dump(mode="json") for event in events]}
 
     return ToolDefinition(
@@ -187,19 +203,15 @@ def _build_web_search_tool(search_client: WebSearchClient) -> ToolDefinition:
     )
 
 
-_MAX_FACT_LENGTH = 500
-
-
 def _build_remember_fact_tool(user_id: str, memory_store: MemoryStore) -> ToolDefinition:
     def handler(arguments: Dict[str, Any]) -> Dict[str, Any]:
         fact_text = arguments["fact_text"]
-        if len(fact_text) > _MAX_FACT_LENGTH:
-            # A future milestone (6.3) automatically pulls every remembered
-            # fact into every conversation's context -- an unbounded fact
-            # would be a standing cost/context-budget problem on every future
-            # turn, not just this one, so this is enforced here rather than
-            # left to the model's judgment.
-            return {"ok": False, "reason": f"fact is too long (max {_MAX_FACT_LENGTH} characters)"}
+        if len(fact_text) > MAX_FACT_LENGTH:
+            # The cap is enforced here rather than left to the model's
+            # judgment; it now lives in app.memory (see MAX_FACT_LENGTH's
+            # comment there for why) so this tool and the /facts edit route
+            # can't drift apart on what "too long" means.
+            return {"ok": False, "reason": f"fact is too long (max {MAX_FACT_LENGTH} characters)"}
 
         memory_store.remember_fact(user_id, fact_text)
         return {"ok": True, "remembered": fact_text}
@@ -228,7 +240,7 @@ def _build_remember_fact_tool(user_id: str, memory_store: MemoryStore) -> ToolDe
                     "type": "string",
                     "description": (
                         "The fact to remember, written plainly and concisely "
-                        f"(max {_MAX_FACT_LENGTH} characters), e.g. \"I'm "
+                        f"(max {MAX_FACT_LENGTH} characters), e.g. \"I'm "
                         "vegetarian\" or \"My sister's name is Maya\"."
                     ),
                 }

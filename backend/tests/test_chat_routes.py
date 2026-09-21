@@ -2,7 +2,14 @@ from typing import List, Optional
 
 from fastapi.testclient import TestClient
 
-from app.chat import SYSTEM_PROMPT, ChatMessage, build_system_prompt, get_chat_engine
+from app.chat import (
+    SYSTEM_PROMPT,
+    ChatMessage,
+    build_memory_note,
+    build_system_prompt,
+    get_chat_engine,
+)
+from app.chat_routes import _MAX_CHAT_MESSAGE_CHARS, _MAX_CHAT_MESSAGES
 from app.config import PERSONA
 from app.extraction import ExtractedEventDraft, get_extractor
 from app.main import app
@@ -47,6 +54,10 @@ class FakeMemoryStore:
         self.received_query_text = query_text
         self.received_limit = limit
         return self._facts
+
+    def update_fact(self, user_id: str, fact_id: str, fact_text: str):
+        # Part of the MemoryStore Protocol; /chat never edits facts.
+        return None
 
 
 class FakeChatEngine:
@@ -137,6 +148,70 @@ def test_chat_injects_remembered_facts_into_the_system_prompt() -> None:
     assert fake_store.received_user_id == "test-user-id"
     assert fake_store.received_query_text == "hello"
     assert fake_store.received_limit == 10
+
+
+def test_chat_repeats_remembered_facts_right_before_the_final_user_message() -> None:
+    """Facts in the top system prompt alone measured 1/3 correct against
+    gpt-5-mini on an edited-memory replay; repeating them immediately
+    before the current question measured 3/3 (see build_memory_note)."""
+    fake_engine = FakeChatEngine()
+    app.dependency_overrides[get_chat_engine] = lambda: fake_engine
+    facts = ["The user's brother lives in San Diego."]
+    app.dependency_overrides[get_memory_store] = lambda: FakeMemoryStore(facts=facts)
+    messages = [
+        ChatMessage(role="user", content="my brother lives in San Francisco"),
+        ChatMessage(role="assistant", content="Saved that."),
+        ChatMessage(role="user", content="where does my brother live?"),
+    ]
+
+    response = client.post("/chat", json=_request(messages))
+
+    assert response.status_code == 200
+    sent = fake_engine.received_messages
+    # The full prompt still leads the conversation...
+    assert sent[0].role == "system"
+    assert sent[0].content == build_system_prompt(PERSONA, facts)
+    # ...and the same facts are restated directly before the question.
+    assert sent[-1].role == "user"
+    assert sent[-1].content == "where does my brother live?"
+    assert sent[-2].role == "system"
+    assert sent[-2].content == build_memory_note(facts)
+    assert "San Diego" in sent[-2].content
+
+
+def test_chat_omits_the_memory_note_when_there_are_no_facts() -> None:
+    fake_engine = FakeChatEngine()
+    app.dependency_overrides[get_chat_engine] = lambda: fake_engine
+    app.dependency_overrides[get_memory_store] = lambda: FakeMemoryStore(facts=[])
+
+    response = client.post("/chat", json=_request([ChatMessage(role="user", content="hello")]))
+
+    assert response.status_code == 200
+    sent = fake_engine.received_messages
+    assert len(sent) == 2
+    assert [m.role for m in sent] == ["system", "user"]
+    assert sent[0].content == SYSTEM_PROMPT
+
+
+def test_chat_does_not_return_the_memory_note_to_the_client() -> None:
+    """The note is per-request scaffolding: run_turn returns only the
+    messages it generated, so the client never sees it and can't echo it
+    back into the next turn's history."""
+    fake_engine = FakeChatEngine(
+        response_messages=[ChatMessage(role="assistant", content="San Diego.")]
+    )
+    app.dependency_overrides[get_chat_engine] = lambda: fake_engine
+    facts = ["The user's brother lives in San Diego."]
+    app.dependency_overrides[get_memory_store] = lambda: FakeMemoryStore(facts=facts)
+
+    response = client.post(
+        "/chat", json=_request([ChatMessage(role="user", content="where does my brother live?")])
+    )
+
+    assert response.status_code == 200
+    new_messages = response.json()["new_messages"]
+    assert [m["role"] for m in new_messages] == ["assistant"]
+    assert all("Current saved memory" not in (m.get("content") or "") for m in new_messages)
 
 
 def test_chat_falls_back_to_no_facts_when_memory_store_read_fails() -> None:
@@ -288,3 +363,63 @@ class RealisticFakeExtractor:
                 confidence="high",
             )
         ]
+
+
+def test_chat_trims_an_over_long_history_instead_of_rejecting_it() -> None:
+    """Review finding F7: this used to be a 422, which in practice killed
+    the conversation for good -- iOS resends its whole in-memory history on
+    every call, so once it crossed the cap every subsequent turn 422'd too,
+    with nothing the user could do but relaunch the app."""
+    fake_engine = FakeChatEngine()
+    app.dependency_overrides[get_chat_engine] = lambda: fake_engine
+    messages = [
+        ChatMessage(role="user" if i % 2 == 0 else "assistant", content=f"turn {i}")
+        for i in range(_MAX_CHAT_MESSAGES + 40)
+    ]
+    messages[-1] = ChatMessage(role="user", content="the newest thing I said")
+
+    response = client.post("/chat", json=_request(messages))
+
+    assert response.status_code == 200
+    # One system message is prepended by the route itself (this history has
+    # none of its own), on top of the trimmed window.
+    assert len(fake_engine.received_messages) == _MAX_CHAT_MESSAGES + 1
+    assert fake_engine.received_messages[0].role == "system"
+    # The OLDEST turns are the ones dropped; the newest must survive.
+    assert fake_engine.received_messages[-1].content == "the newest thing I said"
+    assert all(m.content != "turn 0" for m in fake_engine.received_messages)
+
+
+def test_chat_trimming_keeps_a_leading_system_message() -> None:
+    """The client's own system message is the conversation's instructions,
+    not history -- dropping it with the rest of the head would silently
+    change the assistant's behaviour mid-conversation (and make the route
+    substitute a default persona prompt in its place)."""
+    fake_engine = FakeChatEngine()
+    app.dependency_overrides[get_chat_engine] = lambda: fake_engine
+    messages = [ChatMessage(role="system", content="you are a pirate")]
+    messages += [
+        ChatMessage(role="user" if i % 2 == 0 else "assistant", content=f"turn {i}")
+        for i in range(_MAX_CHAT_MESSAGES + 40)
+    ]
+    messages[-1] = ChatMessage(role="user", content="still here?")
+
+    response = client.post("/chat", json=_request(messages))
+
+    assert response.status_code == 200
+    assert len(fake_engine.received_messages) == _MAX_CHAT_MESSAGES
+    assert fake_engine.received_messages[0].content == "you are a pirate"
+    assert fake_engine.received_messages[-1].content == "still here?"
+
+
+def test_chat_still_rejects_a_single_oversized_message() -> None:
+    """Trimming the history is about how much came along for the ride; an
+    individual message over the character cap is still the caller's to fix."""
+    app.dependency_overrides[get_chat_engine] = lambda: FakeChatEngine()
+
+    response = client.post(
+        "/chat",
+        json=_request([ChatMessage(role="user", content="x" * (_MAX_CHAT_MESSAGE_CHARS + 1))]),
+    )
+
+    assert response.status_code == 422

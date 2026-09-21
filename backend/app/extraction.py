@@ -1,5 +1,6 @@
 import json
 import logging
+from functools import lru_cache
 from typing import List, Literal, Optional, Protocol
 
 from openai import OpenAI
@@ -129,7 +130,13 @@ class OpenAIEventExtractor:
         return [ExtractedEventDraft.model_validate(raw) for raw in raw_events]
 
 
+@lru_cache(maxsize=1)
 def get_default_extractor() -> EventExtractor:
+    # Cached -- see weather.get_default_weather_client's identical comment
+    # for why this is safe despite the module's own "fresh per call, no
+    # caching" convention elsewhere. Was constructing a brand-new OpenAI
+    # client on every single /extract and /gmail/candidates call (the
+    # latter calling it once per unread message).
     return OpenAIEventExtractor()
 
 

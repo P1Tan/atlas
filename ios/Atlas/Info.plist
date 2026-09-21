@@ -31,6 +31,8 @@
 	<string>1</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Atlas needs calendar access to add events you've confirmed from extracted emails.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Atlas uses your approximate location so it can answer location-based questions (like the weather) without you having to say where you are.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Atlas uses your microphone to hear you when you talk to it.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

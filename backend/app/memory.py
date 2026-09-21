@@ -1,8 +1,19 @@
 from dataclasses import dataclass
-from typing import List, Protocol
+from typing import List, Optional, Protocol
 
 from app.embeddings import EmbeddingClient, get_default_embedding_client
 from app.supabase_client import get_supabase_client
+
+
+# The single cap on a stored fact's length, shared by every write path
+# (app.tools' remember_fact tool and PATCH /facts/{id}) -- it lives here
+# rather than in tools.py because it's a property of what the memory store
+# will hold, and both writers already import this module (tools.py importing
+# memory_routes, or vice versa, would be a circular import). Every
+# remembered fact is pulled into every future conversation's context, so an
+# unbounded fact would be a standing cost/context-budget problem on every
+# turn, not just the one that wrote it.
+MAX_FACT_LENGTH = 500
 
 
 @dataclass
@@ -111,6 +122,26 @@ class SupabaseMemoryStore:
             .execute()
         )
         return len(response.data) > 0
+
+    def update_fact(self, user_id: str, fact_id: str, fact_text: str) -> Optional[FactRecord]:
+        embedding = self._embedding_client.embed(fact_text)
+        response = (
+            get_supabase_client()
+            .table("user_facts")
+            .update({"fact_text": fact_text, "embedding": embedding})
+            .eq("id", fact_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        # The updated row comes back from the update call itself (PostgREST
+        # returns the representation by default) -- deliberately not a
+        # follow-up read, which would either need re-scoping by user_id or
+        # risk returning a row this user doesn't own. An empty list means
+        # the id/user_id pair matched nothing.
+        if not response.data:
+            return None
+        row = response.data[0]
+        return FactRecord(id=row["id"], fact_text=row["fact_text"], created_at=row["created_at"])
 
 
 def get_default_memory_store() -> MemoryStore:

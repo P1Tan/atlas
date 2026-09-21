@@ -79,12 +79,27 @@ private struct MainTabView: View {
         .task {
             await healthChecker.check()
         }
-        // A share-sheet hand-off targets the Email tab's paste box (still
-        // the only place that flow lives, until Milestone 4.3 migrates
+        // A share-sheet hand-off is extracted by the Email tab (still the
+        // only place that flow lives, until Milestone 4.3 migrates
         // email-to-calendar into the chat tool loop) -- surface it, don't
-        // populate a screen the user isn't looking at.
+        // run it on a screen the user isn't looking at.
         .onChange(of: shareInbox.pendingText) { _, newValue in
             guard newValue != nil else { return }
+            selectedTab = .email
+        }
+        // Found live: a share that arrives while signed out (SignInView is
+        // shown, MainTabView -- and this .onChange -- doesn't exist yet)
+        // sets shareInbox.pendingText with nothing listening. Once sign-in
+        // completes and MainTabView mounts fresh, .onChange never fires for
+        // a value that was already non-nil before it attached, so the tab
+        // silently stayed on Chat with the share unconsumed -- the user had
+        // no visible sign their share was even received. (The same catch-up
+        // is what makes AtlasApp's ATLAS_TEST_SHARE_TEXT seam work, since
+        // that value is set before this view ever mounts.) Mirrors the
+        // identical catch-up check
+        // ChatView.swift already has for launchCoordinator.widgetVoiceTrigger.
+        .task {
+            guard shareInbox.pendingText != nil else { return }
             selectedTab = .email
         }
         // Milestone 8.2: a widget tap while on another tab should surface

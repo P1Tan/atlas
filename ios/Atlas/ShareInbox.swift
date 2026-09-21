@@ -8,6 +8,13 @@ import Foundation
 final class ShareInbox: ObservableObject {
     @Published var pendingText: String?
 
+    /// `pendingText` can be seeded at construction so a hand-off is already
+    /// waiting before any view mounts -- see AtlasApp's ATLAS_TEST_SHARE_TEXT
+    /// seam, which is the only caller that passes a value.
+    init(pendingText: String? = nil) {
+        self.pendingText = pendingText
+    }
+
     func handle(url: URL) {
         guard
             url.scheme == "atlas",

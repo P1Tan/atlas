@@ -28,6 +28,11 @@ struct ChatView: View {
                     }
                     .padding()
                 }
+                // iMessage's behaviour: dragging the conversation down pulls
+                // the keyboard with it, which is the only way to dismiss it
+                // here -- the message field is multi-line, so its return key
+                // inserts a newline instead of closing the keyboard.
+                .scrollDismissesKeyboard(.interactively)
                 .accessibilityIdentifier("ChatMessageList")
                 .onChange(of: viewModel.messages.count) { _, _ in
                     guard let lastIndex = viewModel.messages.indices.last else { return }
@@ -103,6 +108,9 @@ struct ChatView: View {
         // as a genuine "opened the app to talk" launch -- auto-starting
         // voice underneath a share-to-Email hand-off would be surprising
         // and would open a LiveKit connection nobody asked for.
+        .onAppear {
+            viewModel.accessTokenProvider = { await authViewModel.currentAccessToken() }
+        }
         .task {
             guard launchCoordinator.consumeShouldAutoStartVoice() else { return }
             try? await Task.sleep(for: .milliseconds(150))

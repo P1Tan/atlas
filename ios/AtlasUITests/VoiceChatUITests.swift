@@ -178,6 +178,78 @@ final class VoiceChatUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground, "The app should still be running after auto-start.")
     }
 
+    /// LiveKit connection-minute cost control (C2): backgrounding the app
+    /// mid-session must END the voice session, not leave it connected.
+    /// Every local watchdog in `VoiceSessionController` is a `Timer` or a
+    /// `Task.sleep`, and both stop counting once the app loses foreground
+    /// execution, so before the `didEnterBackgroundNotification` observer
+    /// existed a backgrounded turn kept the room (and the billed
+    /// participant connection) alive until LiveKit's own server-side reaper
+    /// noticed the socket was gone.
+    ///
+    /// Same honesty bar as the rest of this file: the Simulator can't show
+    /// that the LiveKit room actually disconnected. What IS checkable from
+    /// here is the observable consequence -- coming back to the foreground
+    /// lands on an idle, mic-available state (the listening indicator and
+    /// its cancel button are gone, meaning `onReplyFailed` reset
+    /// `ChatViewModel.voiceState`) rather than a stuck "Listening..." with a
+    /// disabled mic, which is exactly what a session left running would
+    /// look like. It also pins the deliberate non-behavior: nothing
+    /// auto-resumes listening on the way back in.
+    func testBackgroundingDuringVoiceSessionEndsItAndDoesNotAutoResume() async throws {
+        let app = XCUIApplication()
+        try await TestAuthHelper.launchSignedIn(app)
+        installVoicePermissionInterruptionMonitor()
+
+        // Launch auto-starts listening (see the test above), so no mic tap
+        // is needed -- just the usual nudge for the permission alert.
+        app.tap()
+
+        let micButton = app.buttons["VoiceMicButton"]
+        let cancelButton = app.buttons["VoiceCancelButton"]
+        let errorMessage = app.staticTexts["ChatErrorMessage"]
+
+        let reachedAKnownState = waitUntil(timeout: 20) {
+            cancelButton.exists || errorMessage.exists
+        }
+        XCTAssertTrue(
+            reachedAKnownState,
+            "Expected either a listening state (visible cancel button) or a surfaced error before backgrounding."
+        )
+
+        // Only meaningful if a session was actually live -- if the backend
+        // was unreachable and an error surfaced instead, there is nothing to
+        // background out of.
+        guard cancelButton.exists else {
+            XCTAssertEqual(app.state, .runningForeground)
+            return
+        }
+
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(
+            waitUntil(timeout: 10) { app.state == .runningBackground || app.state == .runningBackgroundSuspended },
+            "Expected the app to actually reach the background."
+        )
+
+        app.activate()
+        XCTAssertTrue(waitUntil(timeout: 10) { app.state == .runningForeground })
+
+        XCTAssertTrue(
+            waitUntil(timeout: 15) { micButton.exists && micButton.isEnabled && !cancelButton.exists },
+            "Expected the backgrounded voice session to have ended: back to an idle, mic-available state "
+                + "rather than stuck listening with a disabled mic."
+        )
+        // The deliberate non-behavior: returning to the foreground must not
+        // silently re-arm the mic (see endActiveSessionForInterruption's
+        // doc comment -- a surprise recording is the failure mode being
+        // avoided). Give it a moment to misbehave before asserting it
+        // didn't.
+        XCTAssertFalse(
+            waitUntil(timeout: 5) { cancelButton.exists },
+            "Returning to the foreground must not auto-resume listening."
+        )
+    }
+
     /// The Simulator prompts for mic/speech-recognition access on first use
     /// of `AVAudioEngine`/`SFSpeechRecognizer` -- these are system alerts
     /// outside the app's own view hierarchy, so XCUITest needs an

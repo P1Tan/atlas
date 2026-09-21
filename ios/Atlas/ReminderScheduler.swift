@@ -31,9 +31,7 @@ final class ReminderScheduler {
     func schedule(title: String, triggerTimeISO8601: String) async -> ReminderScheduleResult {
         guard await requestAccessIfNeeded() else { return .permissionDenied }
 
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        guard let triggerDate = formatter.date(from: triggerTimeISO8601) else {
+        guard let triggerDate = ISO8601Parsing.date(from: triggerTimeISO8601) else {
             return .failure("Could not parse trigger time: \(triggerTimeISO8601)")
         }
 

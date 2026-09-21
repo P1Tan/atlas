@@ -1,3 +1,4 @@
+from functools import lru_cache
 from typing import List, Optional, Protocol
 
 from openai import OpenAI
@@ -21,5 +22,9 @@ class OpenAIEmbeddingClient:
         return response.data[0].embedding
 
 
+@lru_cache(maxsize=1)
 def get_default_embedding_client() -> EmbeddingClient:
+    # Cached -- see weather.get_default_weather_client's identical comment
+    # for why this is safe despite the module's own "fresh per call, no
+    # caching" convention elsewhere.
     return OpenAIEmbeddingClient()

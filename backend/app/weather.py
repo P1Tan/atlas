@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Dict, List, Optional, Protocol
 
 import httpx
@@ -130,7 +131,16 @@ class OpenMeteoWeatherClient:
         return WeatherResult(resolved_location=resolved_location, current=current, forecast=forecast)
 
 
+@lru_cache(maxsize=1)
 def get_default_weather_client() -> WeatherClient:
+    # Cached, not constructed fresh per call -- found live: this is wired as
+    # a FastAPI dependency, so "fresh per call" meant a brand-new
+    # httpx.Client (its own connection pool) on every single /chat request,
+    # never closed. Safe to cache despite every other get_default_* in this
+    # codebase documenting itself as deliberately uncached "so
+    # dependency_overrides takes effect in tests": those tests all override
+    # the wrapper (get_weather_client), never this function directly, so
+    # this function's own caching is invisible to them either way.
     return OpenMeteoWeatherClient()
 
 

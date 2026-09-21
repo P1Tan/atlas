@@ -80,8 +80,17 @@ final class AuthViewModel: ObservableObject {
         isSendingLink = true
         defer { isSendingLink = false }
 
+        // Found live: SignInView's own "disabled" check trims whitespace
+        // before deciding the button is tappable, but the untrimmed field
+        // value was what actually got sent -- leading/trailing whitespace
+        // (common from autofill/paste) could pass that "looks valid" check
+        // yet still reach Supabase's API with it intact. Trimmed here, at
+        // the boundary this class actually owns, rather than trusting every
+        // caller to have already done it.
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+
         do {
-            try await client.auth.signInWithOTP(email: email, redirectTo: SupabaseConfig.authCallbackURL)
+            try await client.auth.signInWithOTP(email: trimmedEmail, redirectTo: SupabaseConfig.authCallbackURL)
             linkSent = true
         } catch {
             errorMessage = error.localizedDescription
@@ -106,6 +115,19 @@ final class AuthViewModel: ObservableObject {
     }
 
     func signOut() async {
+        // Found by review: this flip of `isSignedIn` makes `ContentView`
+        // swap `MainTabView` for `SignInView`, which releases `ChatView`'s
+        // `@StateObject ChatViewModel` -- and, with it, a possibly-live
+        // LiveKit room, active mic capture, and the only code that ever
+        // resets `UIApplication.shared.isIdleTimerDisabled` back to `false`
+        // (so the screen stopped auto-locking for the rest of the process).
+        // Ending the voice turn first, here on the sign-out action itself,
+        // is what makes that teardown happen while the room is still
+        // reachable; see `ActiveVoiceSession` for why it's hooked here and
+        // not to a view lifecycle event. A no-op when no voice turn is in
+        // progress, which is the overwhelmingly common case.
+        await ActiveVoiceSession.shared.endIfActive()
+
         try? await client.auth.signOut()
         isSignedIn = false
         linkSent = false

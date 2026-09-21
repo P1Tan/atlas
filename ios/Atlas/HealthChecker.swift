@@ -14,7 +14,7 @@ private struct HealthResponse: Decodable {
 final class HealthChecker: ObservableObject {
     @Published private(set) var status: HealthStatus = .loading
 
-    private let healthURL = URL(string: "http://127.0.0.1:8000/health")!
+    private let healthURL = URL(string: "\(AtlasAPI.baseURL)/health")!
 
     func check() async {
         status = .loading

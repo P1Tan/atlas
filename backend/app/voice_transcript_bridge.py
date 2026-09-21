@@ -59,6 +59,44 @@ history without triggering an LLM call (confirmed in the installed pipecat
 1.8.1 source, `LLMUserContextAggregator._handle_llm_messages_append`). If
 nothing survives sanitization, nothing is pushed, matching this bridge's
 existing "nothing to do" behavior for the other message types.
+
+Adds a sixth message type, real-device-motivated (device-location-aware
+weather, found missing during live on-device testing):
+
+    {"type": "location", "location": "City, Region"}
+
+Sent once, right after connecting, same timing/mechanism as `context_seed`
+and for the same underlying reason: the voice pipeline's system prompt is
+built once at `voice_agent.py` process startup, so there is no per-turn
+field (unlike `/chat`'s `user_location` request field) for live location
+context to arrive through otherwise. Pushed downstream as a single
+`LLMMessagesAppendFrame` with a short system-role message, `run_llm=False`
+(same "add to context, don't trigger a completion" mechanism `context_seed`
+uses). A non-string/empty `location` is dropped silently, same as an
+all-filtered-out `context_seed`.
+
+Adds a seventh message type, found live: LiveKit's reliable data channel --
+the one every message type above travels over -- was observed silently
+dying mid-session (a raw `publisher data channel '_reliable' closed
+unexpectedly` error at the transport layer, never surfaced to either side
+as a catchable exception). Once that happens, a client can keep locally
+detecting real speech and calling `publish()` with no error at all, while
+none of it ever arrives here -- indistinguishable, from the user's side,
+from "the mic stopped working," and previously undetectable by either end
+for as long as ~5 minutes (`PipelineWorker`'s own idle timeout).
+
+    {"type": "ping"}   ->   {"type": "pong"}  (sent back immediately)
+
+The client pings on an interval and expects a `pong` within a short
+timeout; missing one is what it uses to detect a dead channel and force a
+reconnect (see `VoiceSessionController.swift`). Answered via
+`LiveKitOutputTransportMessageUrgentFrame` rather than pushed like the
+other message types above translate to Pipecat frames -- there's no
+Pipecat-frame equivalent of "echo a data message straight back to the
+client immediately," and Urgent (a SystemFrame) is what skips this from
+getting stuck behind whatever the LLM/TTS stages are still working through,
+which matters here: a slow pong is as useless as no pong for detecting a
+channel that's actually dead.
 """
 
 import logging
@@ -72,7 +110,10 @@ from pipecat.frames.frames import (
     UserStoppedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.transports.livekit.transport import LiveKitInputTransportMessageFrame
+from pipecat.transports.livekit.transport import (
+    LiveKitInputTransportMessageFrame,
+    LiveKitOutputTransportMessageUrgentFrame,
+)
 from pipecat.utils.time import time_now_iso8601
 
 # Matches app/voice_agent.py's logger name -- one logger for the whole voice
@@ -89,6 +130,11 @@ _MAX_TEXT_LENGTH = 2000
 # VoiceSessionController.swift), but the bridge caps independently rather
 # than trusting that always holds. 20 matches iOS's own cap.
 _MAX_SEED_MESSAGES = 20
+
+# A real "City, Region" string from CLGeocoder is always short -- this is
+# generous headroom, not a real-world limit, same defensive-cap spirit as
+# _MAX_TEXT_LENGTH above.
+_MAX_LOCATION_LENGTH = 200
 
 
 class LiveKitTranscriptBridge(FrameProcessor):
@@ -193,6 +239,52 @@ class LiveKitTranscriptBridge(FrameProcessor):
                     LLMMessagesAppendFrame(messages=sanitized, run_llm=False),
                     direction,
                 )
+            return
+        elif message_type == "location":
+            # Milestone: device-location-aware weather/etc. Same mechanism
+            # as context_seed (an LLMMessagesAppendFrame with run_llm=False,
+            # sent once right after connecting) since the voice pipeline's
+            # system prompt is built once at process startup with no
+            # per-turn request field the way /chat's user_location is --
+            # this is the only way live location context reaches a voice
+            # session's LLM context at all.
+            raw_location = payload.get("location")
+            if not isinstance(raw_location, str):
+                logger.warning(
+                    "LiveKitTranscriptBridge: dropping location message with "
+                    "missing/non-string 'location' field: %r",
+                    payload,
+                )
+                return
+            location = raw_location.strip()[:_MAX_LOCATION_LENGTH]
+            if not location:
+                return
+            await self.push_frame(
+                LLMMessagesAppendFrame(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                f"The user's current approximate location is: {location}. Use this for "
+                                "weather or other location-based questions when they don't name a place "
+                                "themselves; always prefer a place they explicitly state instead."
+                            ),
+                        }
+                    ],
+                    run_llm=False,
+                ),
+                direction,
+            )
+            return
+        elif message_type == "ping":
+            # See the module docstring's seventh-message-type note -- this
+            # is a dead-data-channel probe, not a real turn-boundary/content
+            # message, so it's answered directly rather than translated into
+            # any Pipecat frame the rest of the pipeline would understand.
+            await self.push_frame(
+                LiveKitOutputTransportMessageUrgentFrame(message={"type": "pong"}),
+                direction,
+            )
             return
         else:
             logger.warning(

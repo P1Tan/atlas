@@ -123,3 +123,49 @@ def test_result_is_timezone_aware_in_the_requested_zone() -> None:
 def test_unknown_timezone_raises_value_error() -> None:
     with pytest.raises(ValueError):
         resolve_date_phrase("tomorrow", REFERENCE, "Not/A_Zone")
+
+
+def test_this_weekend_resolves_to_the_coming_saturday_midweek() -> None:
+    # REFERENCE is a Tuesday.
+    result = resolve_date_phrase("this weekend", REFERENCE, TZ)
+    assert result.start.date().isoformat() == "2026-08-22"
+
+
+def test_this_weekend_on_a_saturday_resolves_to_today() -> None:
+    saturday = datetime(2026, 8, 22, 12, 0, 0)
+    result = resolve_date_phrase("this weekend", saturday, TZ)
+    assert result.start.date().isoformat() == "2026-08-22"
+
+
+def test_this_weekend_on_a_sunday_resolves_to_today_not_next_weekend() -> None:
+    # Review finding F9(a): this used to resolve to the Saturday six days
+    # out -- i.e. NEXT weekend -- for someone saying "this weekend" while
+    # the weekend was still happening.
+    sunday = datetime(2026, 8, 23, 12, 0, 0)
+    result = resolve_date_phrase("this weekend", sunday, TZ)
+    assert result.start.date().isoformat() == "2026-08-23"
+
+
+def test_next_weekend_on_a_sunday_still_moves_forward() -> None:
+    sunday = datetime(2026, 8, 23, 12, 0, 0)
+    result = resolve_date_phrase("next weekend", sunday, TZ)
+    assert result.start.date().isoformat() == "2026-08-29"
+
+
+def test_modal_may_does_not_hijack_the_month_name_branch() -> None:
+    # Review finding F9(b): "may" is a month name AND an ordinary modal
+    # verb, so this phrase entered the month branch, failed
+    # dateutil(fuzzy=False) and resolved to nothing at all -- losing the
+    # weekday the phrase plainly contains.
+    result = resolve_date_phrase("may be Thursday", REFERENCE, TZ)
+    assert result.start.date().isoformat() == "2026-08-20"
+
+
+def test_unparseable_phrase_with_a_real_month_name_still_resolves_to_nothing() -> None:
+    # The flip side of F9(b)'s fall-through: a genuinely ambiguous phrase
+    # that really does name a month must NOT fall through to the
+    # bare-ordinal heuristic, which would drop "Dec" and resolve to the 3rd
+    # of the nearest month -- the silent wrong-month guess the month branch
+    # was ordered first to prevent.
+    result = resolve_date_phrase("Dec 3rd or 4th", REFERENCE, TZ)
+    assert result.start is None

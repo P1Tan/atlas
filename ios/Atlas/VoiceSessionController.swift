@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import LiveKit
+import UIKit
 
 /// Milestone 7.4b: drives a full push-to-talk voice turn against the
 /// backend's Pipecat/LiveKit voice pipeline -- fetches a LiveKit join token
@@ -64,11 +65,34 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
     /// Fired when playback of the current reply's audio has gone quiet
     /// (finished, or was stopped/replaced).
     var onPlaybackStopped: (() -> Void)?
+    /// Fired exactly once a voice turn's reply has completed entirely
+    /// normally: both the assistant's text and its full spoken audio
+    /// arrived, then genuinely went quiet -- NOT the timeout/pipeline-error/
+    /// interruption paths that also tear the room down (see
+    /// `finishVoiceSessionAfterReply`'s `replyCompletedSuccessfully` param).
+    /// Never fires for an explicit user cancel either -- `cancelVoiceTurn()`
+    /// tears the room down directly and never reaches that method at all.
+    /// Exists so a caller can auto-start a new turn only after a real,
+    /// successful reply, continuous-conversation-style, without also
+    /// auto-restarting into a mic session right after a failure.
+    var onReplyCompleted: (() -> Void)?
+    /// Fired whenever a voice session ends WITHOUT a successful reply: the
+    /// 30s no-reply timeout, a `pipeline_error` message, an interruption
+    /// while `.awaitingReply` (every case where `finishVoiceSessionAfterReply`
+    /// runs without `replyCompletedSuccessfully`), and an interruption while
+    /// `.listening`/`.connecting` (via `cancelVoiceTurn()`, see
+    /// `endActiveSessionForInterruption`). `onError` above already carries
+    /// the human-readable reason for all of these; this exists purely so a
+    /// caller can still reset its own UI state (e.g. `ChatViewModel.voiceState`)
+    /// even when nothing else on these paths does -- without it, a caller
+    /// left showing "waiting for a reply" or "Listening…" has no way to
+    /// notice the session actually ended.
+    var onReplyFailed: (() -> Void)?
     var onError: ((String) -> Void)?
 
     private(set) var state: SessionState = .idle
 
-    private let baseURL = "http://127.0.0.1:8000"
+    private let baseURL = AtlasAPI.baseURL
     private var room: Room?
     private let transcriptionService = VoiceTranscriptionService()
     private var eventTask: Task<Void, Never>?
@@ -89,9 +113,28 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
     /// protocol, so -- exactly like `VoiceTranscriptionService`'s own
     /// RMS/silence-window heuristic for the *user's* turn boundary -- this
     /// treats a gap with no new PCM frames as the reply having finished.
+    ///
+    /// Corrected after live diagnostic logging: that comment's original
+    /// premise -- "a gap with no new PCM frames" -- turned out to be false.
+    /// WebRTC delivers a continuous, essentially unbroken stream of frames
+    /// (confirmed: every ~10ms, zero gap) for as long as the remote track
+    /// stays subscribed, regardless of whether the assistant is actually
+    /// saying anything -- a real design property of the transport, not a
+    /// bug. `lastAudioFrameTime` is therefore updated only from frames
+    /// whose content clears `replySilenceThreshold` below, NOT from every
+    /// frame that merely arrives -- see `audioFrameReceived`.
     private var quietCheckTimer: Timer?
     private var lastAudioFrameTime: Date?
     private let playbackQuietWindow: TimeInterval = 1.0
+    /// Peak-amplitude (0...1) floor a frame's content must clear to count as
+    /// real speech rather than the continuous low-level/comfort-noise
+    /// stream WebRTC keeps delivering during silence. A first-pass estimate,
+    /// not yet validated against real device data the way the mic-input
+    /// threshold was (`VoiceTranscriptionService.silenceThreshold`) -- the
+    /// diagnostic logging that found this bug is left in place specifically
+    /// so this can be recalibrated from real numbers if it turns out wrong,
+    /// same as that earlier investigation.
+    private let replySilenceThreshold: Float = 0.02
 
     // MARK: - Reply-completion / room-teardown bookkeeping (Finding 0)
 
@@ -120,11 +163,114 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
     /// `voice_assistant_reply_bridge.py`'s doc comment), `replyTextReceived`
     /// / `replyAudioFinished` could otherwise never both become `true` and
     /// the room would stay connected forever. This unconditionally finishes
-    /// the session a fixed time after listening stops, regardless of what
-    /// did or didn't arrive, so the state machine can never get stuck in
-    /// `.awaitingReply`.
-    private var awaitingReplyTimeoutTask: Task<Void, Never>?
+    /// the session a fixed time after the *last sign of life*, so the state
+    /// machine can never get stuck in `.awaitingReply`.
+    ///
+    /// History (why this is an `ExtendableDeadline`, not a flat `Task.sleep`):
+    /// found live that a flat, never-reset 30s timeout cut off long replies
+    /// mid-playback (a full LLM+TTS+playback round trip can easily exceed
+    /// 30s while working correctly); found live AGAIN, immediately after
+    /// making it reset-on-activity, that an unreset-able reset is exactly as
+    /// dangerous as no timeout at all -- a stuck genuine-quiet detector (the
+    /// render tap kept receiving a trickle of frames well past when the
+    /// reply actually ended, confirmed with the app held in the foreground
+    /// the whole time) pushed the deadline out forever. `ExtendableDeadline`
+    /// is the general shape both fixes needed at once: `extend()`-able, but
+    /// never past `maxAwaitingReplyDuration` from the original `start()`.
+    private lazy var awaitingReplyDeadline = ExtendableDeadline(
+        duration: awaitingReplyTimeout, maxTotalDuration: maxAwaitingReplyDuration
+    ) { [weak self] in
+        guard let self, self.state == .awaitingReply else { return }
+        // Milestone 9.1 (NFR2): this firing while still `.awaitingReply`
+        // means total silence -- no `pipeline_error` message arrived either
+        // (that path calls `finishVoiceSessionAfterReply()` directly, which
+        // cancels this deadline before it ever gets here), so nothing has
+        // told the user what happened yet.
+        if !(self.replyTextReceived && self.replyAudioFinished) {
+            self.onError?("Atlas didn't reply in time. Please try again.")
+        }
+        await self.finishVoiceSessionAfterReply()
+    }
     private let awaitingReplyTimeout: TimeInterval = 30.0
+    /// Hard ceiling on total time spent in `.awaitingReply`, independent of
+    /// `checkForQuiet()`'s `extend()` calls: generous enough for a
+    /// genuinely long spoken reply (the original problem this whole
+    /// mechanism exists to tolerate), but finite, so a stuck genuine-quiet
+    /// detector can never hang the session indefinitely.
+    private let maxAwaitingReplyDuration: TimeInterval = 90.0
+
+    // MARK: - Listening idle timeout (LiveKit connection-minute cost control)
+
+    /// Nothing in this state machine used to bound `.listening`. LiveKit
+    /// Cloud bills participant connection minutes, and continuous-
+    /// conversation mode auto-starts a fresh turn after every reply, so a
+    /// user who simply walked away left BOTH participants connected (mic
+    /// hot, room open) until the join token's 1h TTL finally expired -- the
+    /// single largest source of billed-but-unused minutes in the per-turn
+    /// room design.
+    ///
+    /// This bounds exactly that case: a listening turn during which no
+    /// speech was ever detected. Started when `.listening` is entered
+    /// (`startVoiceTurn()`), cancelled on the first `.speechStarted`
+    /// (`handle(_:)`) -- from then on the turn is already bounded by the
+    /// user's own utterance plus `maxAwaitingReplyDuration` -- and in
+    /// `teardownRoom()` alongside `awaitingReplyDeadline`.
+    ///
+    /// Deliberately does NOT auto-restart listening the way a successful
+    /// reply does (`onReplyCompleted`): re-arming the mic after a silence
+    /// timeout would put the room straight back into the exact state this
+    /// exists to end.
+    ///
+    /// Reuses `ExtendableDeadline` rather than hand-rolling another
+    /// `Task.sleep`, with `maxTotalDuration` equal to `duration`: nothing
+    /// ever calls `extend()` on this one (detected speech cancels it
+    /// outright rather than pushing it out), so the cap can't matter --
+    /// matching the two values keeps that explicit instead of implying some
+    /// extension budget exists.
+    private lazy var listeningIdleDeadline = ExtendableDeadline(
+        duration: listeningIdleTimeout, maxTotalDuration: listeningIdleTimeout
+    ) { [weak self] in
+        guard let self, self.state == .listening else { return }
+        // Soft, non-alarming wording on purpose: nothing failed here, the
+        // session was just closed so an unattended room stops costing money.
+        self.onError?("Stopped listening after a while of silence. Tap the mic when you're ready.")
+        await self.cancelVoiceTurn()
+        // Same gap `endActiveSessionForInterruption` closes on its own
+        // cancel path (see `onReplyFailed`'s doc comment): `cancelVoiceTurn()`
+        // never tells a caller the session ended, so without this
+        // `ChatViewModel.voiceState` stays at `.listening` and the mic button
+        // keeps showing a turn that is already over.
+        self.onReplyFailed?()
+    }
+    /// How long `.listening` may run without a single detected utterance
+    /// before the turn is ended. Long enough not to cut off someone who
+    /// tapped the mic and is still gathering their thoughts, short enough
+    /// that an abandoned session costs seconds of connection time instead of
+    /// the full hour the token would otherwise allow.
+    private let listeningIdleTimeout: TimeInterval = 45.0
+
+    // MARK: - Data-channel heartbeat (dead-channel detection)
+
+    /// Found live: LiveKit's reliable data channel -- the one every
+    /// `publish()` call in this file goes over -- was observed silently
+    /// dying mid-session (`publisher data channel '_reliable' closed
+    /// unexpectedly` at the transport layer). Once that happens,
+    /// `transcriptionService` keeps detecting real speech locally and
+    /// `publish()` keeps returning normally (never throws), but literally
+    /// nothing reaches the backend -- indistinguishable from "the mic
+    /// stopped working" from the user's side, and previously only
+    /// discoverable after minutes (via the backend's own 5-minute idle
+    /// timeout). This is an app-level ping/pong probe specifically because
+    /// there is no lower-level signal available: neither this SDK version
+    /// nor a thrown error from `publish()` surfaces the failure.
+    private var heartbeatTask: Task<Void, Never>?
+    private var lastPongReceivedAt: Date?
+    private let heartbeatInterval: TimeInterval = 5.0
+    /// Roughly 2 missed round trips' worth of tolerance before declaring
+    /// the channel dead -- long enough to absorb ordinary network jitter,
+    /// short enough that detection lands in ~15s worst case rather than the
+    /// minutes it took before this existed.
+    private let heartbeatTimeout: TimeInterval = 12.0
 
     // MARK: - Local replay playback
 
@@ -161,6 +307,9 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
 
     private var interruptionObserver: NSObjectProtocol?
     private var routeChangeObserver: NSObjectProtocol?
+    /// Not an audio-session observer like the two above, but registered and
+    /// torn down with them -- see `observeAudioSessionEvents()`.
+    private var didEnterBackgroundObserver: NSObjectProtocol?
     /// Guards `endActiveSessionForInterruption` against firing twice for one
     /// real-world event -- a phone call can plausibly trigger both
     /// `interruptionNotification` and a `.oldDeviceUnavailable` route change
@@ -169,8 +318,8 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
 
     override init() {
         super.init()
-        replayRenderer.onFrame = { [weak self] in
-            Task { @MainActor in self?.audioFrameReceived() }
+        replayRenderer.onFrame = { [weak self] peak in
+            Task { @MainActor in self?.audioFrameReceived(peakAmplitude: peak) }
         }
         observeAudioSessionEvents()
     }
@@ -181,6 +330,9 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         }
         if let routeChangeObserver {
             NotificationCenter.default.removeObserver(routeChangeObserver)
+        }
+        if let didEnterBackgroundObserver {
+            NotificationCenter.default.removeObserver(didEnterBackgroundObserver)
         }
     }
 
@@ -235,6 +387,34 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
                 )
             }
         }
+        // LiveKit connection-minute cost control, and the reason
+        // `listeningIdleDeadline` alone isn't enough: every local watchdog
+        // in this file is a `Timer` or a `Task.sleep`, and both stop
+        // counting the moment the app loses foreground execution -- so a
+        // user who swipes away mid-turn leaves the room connected (and
+        // billed) until LiveKit's own server-side reaper eventually notices
+        // the socket is gone. That was already confirmed live from the other
+        // direction, in `finishVoiceSessionAfterReply`'s own history: a room
+        // sat open and untouched for two and a half minutes after a reply
+        // finished, consistent with exactly this. Backgrounding is the last
+        // moment code still reliably runs, so the session is ended here
+        // instead. Deliberately no matching `willEnterForeground` resume,
+        // for the same reason `endActiveSessionForInterruption` never
+        // resumes anything: silently reopening a mic session the user didn't
+        // ask for is the surprise-recording failure mode, not a convenience.
+        didEnterBackgroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // Same main-actor hop as the two observers above: `queue: .main`
+            // gets this onto the main thread, but the closure is still
+            // non-isolated as far as the compiler is concerned, so it can't
+            // touch this `@MainActor` class's state without the hop.
+            Task { @MainActor in
+                self?.endActiveSessionForInterruption(
+                    reason: "Voice session ended because Atlas went to the background. Tap the mic to start again."
+                )
+            }
+        }
     }
 
     /// Ends whatever's currently active -- a live voice turn, a reply still
@@ -269,6 +449,13 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
             onError?(reason)
             Task {
                 await self.cancelVoiceTurn()
+                // Same gap as finishVoiceSessionAfterReply's failure paths
+                // (see onReplyFailed's doc comment), different call site:
+                // cancelVoiceTurn() here never tells a caller the session
+                // died, so without this a caller left showing "Listening…"
+                // stays stuck showing it -- self-correcting only if the user
+                // happens to tap the (now-dead) mic button and notices.
+                self.onReplyFailed?()
                 self.isEndingSessionForInterruption = false
             }
         case .awaitingReply:
@@ -281,6 +468,52 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         case .idle, .stopping, .stopped:
             break
         }
+    }
+
+    // MARK: - Data-channel heartbeat (dead-channel detection)
+
+    /// Starts pinging once a room connection exists; called from
+    /// `startVoiceTurn()` right after `room.connect()` succeeds.
+    private func startHeartbeat() {
+        heartbeatTask?.cancel()
+        lastPongReceivedAt = Date()
+        heartbeatTask = Task { [weak self] in
+            while true {
+                try? await Task.sleep(nanoseconds: UInt64((self?.heartbeatInterval ?? 5) * 1_000_000_000))
+                guard let self, !Task.isCancelled, self.room != nil else { return }
+                let sinceLastPong = Date().timeIntervalSince(self.lastPongReceivedAt ?? Date())
+                if sinceLastPong > self.heartbeatTimeout {
+                    self.handleDeadDataChannel()
+                    return
+                }
+                await self.publish(VoiceDataMessage(type: "ping", text: nil))
+            }
+        }
+    }
+
+    /// Called from `teardownRoom()` -- no point pinging a room that's
+    /// already gone or on its way out.
+    private func stopHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+        lastPongReceivedAt = nil
+    }
+
+    /// The actual recovery action once a missed pong confirms the data
+    /// channel is dead: reuses `endActiveSessionForInterruption`'s existing
+    /// state handling wholesale (it already correctly covers both
+    /// `.listening`/`.connecting` and `.awaitingReply`, and its
+    /// `isEndingSessionForInterruption` guard already prevents double-
+    /// handling if a real interruption fires around the same time) rather
+    /// than duplicating that logic for a third trigger. Deliberately does
+    /// NOT try to resume automatically for the same reason that method
+    /// doesn't either -- a channel just proven dead is not something to
+    /// silently retry into.
+    private func handleDeadDataChannel() {
+        stopHeartbeat()
+        endActiveSessionForInterruption(
+            reason: "Lost connection to Atlas. Tap the mic to try again."
+        )
     }
 
     // MARK: - Session lifecycle
@@ -298,7 +531,7 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
     /// mode continuity (voice->text already worked, since voice-obtained
     /// turns get appended to that same shared array).
     @discardableResult
-    func startVoiceTurn(accessToken: String?, priorMessages: [ChatMessage]) async -> Bool {
+    func startVoiceTurn(accessToken: String?, priorMessages: [ChatMessage], location: String? = nil) async -> Bool {
         guard state == .idle || state == .stopped else { return state == .listening || state == .connecting }
         isCancelled = false
         state = .connecting
@@ -329,11 +562,15 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
             room.delegates.add(delegate: self)
             self.room = room
             try await room.connect(url: voiceToken.url, token: voiceToken.token)
+            startHeartbeat()
 
             // Before any real utterance can possibly be published, seed the
             // backend's fresh voice-session LLM context with recent
             // text-chat history -- see publishContextSeed(from:).
             await publishContextSeed(from: priorMessages)
+            if let location {
+                await publishLocation(location)
+            }
 
             try await transcriptionService.start()
 
@@ -345,6 +582,10 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
             }
 
             state = .listening
+            // Cost control: from here on, an unattended mic can only hold
+            // the room open for `listeningIdleTimeout` -- see
+            // `listeningIdleDeadline`.
+            listeningIdleDeadline.start()
             return true
         } catch let error as VoiceTranscriptionError {
             onError?(error.errorDescription ?? "Could not start a voice session.")
@@ -378,7 +619,7 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         eventTask = nil
 
         state = .awaitingReply
-        scheduleAwaitingReplyTimeout()
+        awaitingReplyDeadline.start()
         // Rare-but-possible race: the reply could already have fully
         // arrived (both `replyTextReceived`/`replyAudioFinished` true)
         // while this method was still awaiting the transcription
@@ -416,17 +657,54 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         isCancelled = false
     }
 
+    /// Ends whatever voice session is in progress, from ANY state, because
+    /// the object graph that owns this controller is about to be released
+    /// (sign-out -- see `ActiveVoiceSession`). The existing exits each only
+    /// cover part of the state machine: `cancelVoiceTurn()` requires
+    /// `.listening`/`.connecting` and `finishVoiceSessionAfterReply()`
+    /// requires `.awaitingReply`, so calling either one alone would silently
+    /// no-op for a session sitting in the other half and leave the room
+    /// connected and the mic capturing with nobody left to stop them.
+    func endSessionForSignOut() async {
+        switch state {
+        case .listening, .connecting:
+            await cancelVoiceTurn()
+        case .awaitingReply:
+            // Deliberately the failure-flavoured finish (the default
+            // `replyCompletedSuccessfully: false`). The success flavour
+            // fires `onReplyCompleted`, which is what continuous-conversation
+            // mode uses to auto-start ANOTHER voice turn -- the last thing
+            // anyone wants from the sign-out path. `onReplyFailed` instead
+            // just resets the caller's UI state, which is all that's wanted
+            // here.
+            await finishVoiceSessionAfterReply()
+        case .idle, .stopping, .stopped:
+            // Nothing connected (`.idle`/`.stopped`), or an in-flight
+            // stop/cancel is already tearing the same room down
+            // (`.stopping`) and racing it would just have both paths
+            // calling `teardownRoom()` at once.
+            break
+        }
+        // Separate from the room teardown above on purpose: a reply's audio
+        // can still be playing (live track volume, or a local replay through
+        // `AVAudioEngine`) in states where there is nothing left to
+        // disconnect, and audio outliving the screen that explains it is its
+        // own bug.
+        stopPlayback()
+    }
+
     /// The single chokepoint that actually disconnects from the room --
     /// called from `cancelVoiceTurn()` (explicit bail-out) and
     /// `finishVoiceSessionAfterReply()` (the reply genuinely completed, or
     /// the `awaitingReplyTimeout` safety net fired). Also cancels any
-    /// pending reply-completion bookkeeping so nothing fires after the room
-    /// is gone.
+    /// pending reply-completion bookkeeping and both session deadlines, so
+    /// nothing fires after the room is gone.
     private func teardownRoom() async {
-        awaitingReplyTimeoutTask?.cancel()
-        awaitingReplyTimeoutTask = nil
+        awaitingReplyDeadline.cancel()
+        listeningIdleDeadline.cancel()
         pendingTeardownTask?.cancel()
         pendingTeardownTask = nil
+        stopHeartbeat()
 
         room?.delegates.remove(delegate: self)
         if let currentAudioTrack {
@@ -439,26 +717,6 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
     }
 
     // MARK: - Reply completion / deferred room teardown (Finding 0)
-
-    private func scheduleAwaitingReplyTimeout() {
-        awaitingReplyTimeoutTask?.cancel()
-        awaitingReplyTimeoutTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64((self?.awaitingReplyTimeout ?? 30) * 1_000_000_000))
-            guard let self, !Task.isCancelled, self.state == .awaitingReply else { return }
-            // Milestone 9.1 (NFR2): this timeout firing while still
-            // `.awaitingReply` means total silence -- no `pipeline_error`
-            // message arrived either (that path calls
-            // `finishVoiceSessionAfterReply()` directly and tears the room
-            // down, which cancels this task before it ever gets here), so
-            // nothing has told the user what happened yet. Used to revert to
-            // idle with zero explanation, a silent hang bounded only by this
-            // 30s timeout rather than one that actually surfaces anything.
-            if !(self.replyTextReceived && self.replyAudioFinished) {
-                self.onError?("Atlas didn't reply in time. Please try again.")
-            }
-            await self.finishVoiceSessionAfterReply()
-        }
-    }
 
     /// Called after both `replyTextReceived` and `replyAudioFinished` become
     /// `true` (in either order -- see the call sites in `handleIncomingData`
@@ -474,14 +732,39 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         pendingTeardownTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64((self?.roomTeardownGraceWindow ?? 1.5) * 1_000_000_000))
             guard let self, !Task.isCancelled else { return }
-            await self.finishVoiceSessionAfterReply()
+            // The only call site that represents a genuinely complete,
+            // error-free reply -- see onReplyCompleted's doc comment.
+            await self.finishVoiceSessionAfterReply(replyCompletedSuccessfully: true)
         }
     }
 
     /// Actually ends the voice session: tears down the room. Guarded on
     /// `state == .awaitingReply` so this is a no-op if `cancelVoiceTurn()`
     /// (or a second competing finish path) already tore the room down first.
-    private func finishVoiceSessionAfterReply() async {
+    ///
+    /// `replyCompletedSuccessfully` defaults to `false` -- only
+    /// `finishReplyIfComplete()`'s call site (genuine completion) passes
+    /// `true`. The other three callers (the 30s `awaitingReplyTimeout`
+    /// safety net, a `pipeline_error` message, and an interruption while
+    /// `.awaitingReply`) are all failure/abort paths and fire `onReplyFailed`
+    /// instead.
+    ///
+    /// Found live: a caller (`ChatViewModel`) only ever heard about a
+    /// SUCCESSFUL end of turn (`onReplyCompleted`) -- there was no signal
+    /// at all for the failure paths, so its own UI state (`voiceState`)
+    /// stayed stuck at `.thinking`/`.speaking` forever once one of them
+    /// fired, permanently disabling the mic button (it's disabled in
+    /// exactly those two states) with no way to recover short of
+    /// relaunching the app. Confirmed via a live backend log: a reply
+    /// finished normally, then the room sat open and untouched for two and
+    /// a half minutes -- consistent with the app losing foreground
+    /// execution (RunLoop timers/Task.sleep both pause while backgrounded)
+    /// partway through `checkForQuiet()`'s poll, before it ever reached
+    /// genuine-quiet detection -- until LiveKit's own connection eventually
+    /// gave up and disconnected the participant server-side, landing here
+    /// via the interruption/timeout path with nothing telling `ChatViewModel`
+    /// the turn was over.
+    private func finishVoiceSessionAfterReply(replyCompletedSuccessfully: Bool = false) async {
         guard state == .awaitingReply else { return }
         // Belt-and-suspenders: capture anything still sitting in the
         // renderer's buffer (e.g. the `awaitingReplyTimeout` safety net
@@ -491,6 +774,11 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         finalizeCurrentReplyBuffer()
         await teardownRoom()
         state = .stopped
+        if replyCompletedSuccessfully {
+            onReplyCompleted?()
+        } else {
+            onReplyFailed?()
+        }
     }
 
     private func tearDownAfterFailure() async {
@@ -607,8 +895,24 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
 
     /// Called (via `replayRenderer.onFrame`, already hopped to the main
     /// actor) every time a PCM frame arrives from the subscribed reply
-    /// track. Restarts the "gone quiet" debounce window and, on the first
-    /// frame since a quiet period, fires `onPlaybackStarted`.
+    /// track, with that frame's peak amplitude. Restarts the "gone quiet"
+    /// debounce window and, on the first MEANINGFUL frame since a quiet
+    /// period, fires `onPlaybackStarted`.
+    ///
+    /// `peakAmplitude` is what makes this correct at all: confirmed live via
+    /// temporary diagnostic logging that frames arrive continuously, roughly
+    /// every 10ms, for as long as the track is subscribed -- including
+    /// during genuine silence (WebRTC's own comfort-noise/keep-alive
+    /// packets, not a bug). Treating every arrival as "still talking" (the
+    /// original design here) meant `lastAudioFrameTime` could never age past
+    /// `playbackQuietWindow`, so `checkForQuiet()` could never detect real
+    /// quiet at all -- the room would sit in `.awaitingReply` until
+    /// `awaitingReplyTimeout`'s hard ceiling eventually forced it closed,
+    /// not the ~2.5s this mechanism is supposed to take. Frames below
+    /// `replySilenceThreshold` still arrive and are still logged/tapped
+    /// (`ReplayAudioRenderer.render` never filters anything -- replay/buffer
+    /// capture needs the real trailing audio, not just the "loud enough"
+    /// parts) but no longer count as a sign the reply is ongoing.
     ///
     /// Note this does NOT clear `lastReplyBuffers` on `wasQuiet` (unlike an
     /// earlier draft of Finding 2's fix) -- under Finding 0's redesign a
@@ -619,7 +923,14 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
     /// reply has started. Clearing here would discard everything
     /// accumulated earlier in that same reply. `lastReplyBuffers` is instead
     /// cleared exactly once per real new turn, in `startVoiceTurn()`.
-    private func audioFrameReceived() {
+    private func audioFrameReceived(peakAmplitude: Float) {
+        // Must run on every arrival, not just meaningful ones -- the poll
+        // needs to already be ticking by the time real speech starts (and
+        // stops), not only once the first above-threshold frame shows up.
+        startQuietCheckTimerIfNeeded()
+
+        guard peakAmplitude >= replySilenceThreshold else { return }
+
         let now = Date()
         let wasQuiet = lastAudioFrameTime == nil
         lastAudioFrameTime = now
@@ -632,7 +943,6 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
             pendingTeardownTask = nil
             onPlaybackStarted?()
         }
-        startQuietCheckTimerIfNeeded()
     }
 
     private func startQuietCheckTimerIfNeeded() {
@@ -652,7 +962,22 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
 
     private func checkForQuiet() {
         guard let lastAudioFrameTime else { return }
-        guard Date().timeIntervalSince(lastAudioFrameTime) >= playbackQuietWindow else { return }
+        let sinceLastFrame = Date().timeIntervalSince(lastAudioFrameTime)
+        guard sinceLastFrame >= playbackQuietWindow else {
+            // Still actively receiving audio -- this tick is proof the
+            // reply hasn't stalled, so push the reply watchdog back out.
+            // Piggybacks on this timer's existing 0.3s cadence rather than
+            // resetting on every single PCM frame (far higher frequency
+            // than needed for a coarse safety net). awaitingReplyDeadline
+            // itself owns the hard-ceiling bookkeeping (never past
+            // maxAwaitingReplyDuration) -- this call site doesn't need to
+            // know that ceiling exists, only that "still receiving audio"
+            // is a sign of life worth reporting.
+            if state == .awaitingReply {
+                awaitingReplyDeadline.extend()
+            }
+            return
+        }
         stopQuietCheckTimer()
         finalizeCurrentReplyBuffer()
         onPlaybackStopped?()
@@ -684,6 +1009,13 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         guard !isCancelled else { return }
         switch event {
         case .speechStarted:
+            // Someone is actually here and talking, so the idle-listening
+            // deadline has done its job for this turn: the rest of it is
+            // already bounded by the `speech_stopped` turn-boundary handling
+            // below plus `maxAwaitingReplyDuration`. Cancelling (rather than
+            // extending) is what keeps a real, slow-spoken utterance from
+            // ever being cut off mid-sentence.
+            listeningIdleDeadline.cancel()
             onSpeechStarted?()
             await publish(VoiceDataMessage(type: "speech_started", text: nil))
         case .interim(let text):
@@ -695,6 +1027,36 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         case .speechStopped:
             onSpeechStopped?()
             await publish(VoiceDataMessage(type: "speech_stopped", text: nil))
+            // Real-device acoustic-feedback bug, confirmed via a live
+            // conversation log where the "user" appeared to repeat the
+            // assistant's own reply back verbatim, word for word: this
+            // SAME speech_stopped signal is what the backend's
+            // ExternalUserTurnStrategies uses to decide the user's turn
+            // has ended and start generating + playing a reply -- but
+            // until now, nothing on this end stopped the LOCAL mic engine
+            // in response to it, since that was solely tap-to-stop's job
+            // (Milestone 7.4b, a deliberate UX choice, not an oversight).
+            // With the mic still actively recording through the phone's
+            // own speaker (no headset, no acoustic echo cancellation
+            // between the two), it picks up the reply itself and feeds it
+            // back in as if the user said it -- confirmed capable of
+            // cascading indefinitely, not just a one-off glitch. Stopping
+            // here does not remove tap-to-stop -- a manual tap racing this
+            // is safe, stopVoiceTurn()'s own state guard makes the second
+            // caller a no-op (Finding 3, Milestone 7.4b) -- it just means
+            // the mic ALSO stops automatically once a turn is detected as
+            // complete, matching how every other voice assistant behaves
+            // and closing a real conversation-corrupting bug, not just an
+            // inconvenience.
+            //
+            // Dispatched as a new Task rather than awaited inline: this
+            // method runs as part of eventTask's own `for await` loop, and
+            // stopVoiceTurn() awaits `eventTask?.value` -- calling it
+            // in-line here would be the task awaiting its own completion,
+            // a deadlock.
+            if state == .listening {
+                Task { await self.stopVoiceTurn() }
+            }
         }
     }
 
@@ -732,6 +1094,22 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         }
     }
 
+    /// One-time `location` data message (same publish mechanism/timing as
+    /// `publishContextSeed`, sent right after connecting): the voice
+    /// pipeline's system prompt is built once at `voice_agent.py` process
+    /// startup with no location context at all, unlike text chat's `/chat`
+    /// requests, which get a fresh `user_location` field every call. This
+    /// is how a live voice session gets that same context.
+    private func publishLocation(_ location: String) async {
+        guard let room else { return }
+        do {
+            let data = try JSONEncoder().encode(LocationSeedMessage(type: "location", location: location))
+            try await room.localParticipant.publish(data: data, options: DataPublishOptions(reliable: true))
+        } catch {
+            onError?("Failed to send your location to Atlas: \(error.localizedDescription)")
+        }
+    }
+
     private func publish(_ message: VoiceDataMessage) async {
         guard let room else { return }
         do {
@@ -743,7 +1121,37 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
     }
 
     private func fetchVoiceToken(accessToken: String) async throws -> VoiceTokenResponse {
-        var urlRequest = URLRequest(url: URL(string: "\(baseURL)/voice/token")!)
+        // Found by review: this request carried no timezone at all, so the
+        // backend fell back to a hardcoded developer timezone
+        // (`VOICE_DEV_TIMEZONE`) for every real user -- every voice-mode
+        // date resolution ("tomorrow at 9") and every `set_reminder`
+        // "has that time already passed?" check was computed in someone
+        // else's day. The text path never had this bug: `ChatViewModel.send`
+        // has always sent `TimeZone.current.identifier`, so this just brings
+        // voice in line with it.
+        //
+        // Sent as a URL query parameter because `/voice/token` takes no
+        // request body, and built through `URLComponents` rather than
+        // interpolated into the string: IANA identifiers contain "/"
+        // ("America/Los_Angeles"), and a few contain "+"
+        // ("Etc/GMT+8") -- characters that must be percent-encoded inside a
+        // query value and that string interpolation would pass through raw.
+        // The backend treats the parameter as optional and keeps its old
+        // default when it's absent, so this stays backward compatible in
+        // both directions (old client/new server, new client/old server).
+        guard
+            var components = URLComponents(string: "\(baseURL)/voice/token")
+        else {
+            throw VoiceSessionError.tokenFetchFailed("Couldn't build the voice session request.")
+        }
+        components.queryItems = [
+            URLQueryItem(name: "timezone", value: TimeZone.current.identifier)
+        ]
+        guard let url = components.url else {
+            throw VoiceSessionError.tokenFetchFailed("Couldn't build the voice session request.")
+        }
+
+        var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
@@ -803,10 +1211,14 @@ final class VoiceSessionController: NSObject, @unchecked Sendable {
         case "tool_result":
             guard let message = try? Self.responseDecoder.decode(ToolResultMessage.self, from: data) else { return }
             onToolResult?(message)
+        case "pong":
+            // Dead-data-channel probe response -- see heartbeatTask's doc
+            // comment. No payload beyond `type` to decode.
+            lastPongReceivedAt = Date()
         case "pipeline_error":
             guard let message = try? Self.responseDecoder.decode(PipelineErrorMessage.self, from: data) else { return }
-            // Guarded on .awaitingReply, mirroring scheduleAwaitingReplyTimeout's
-            // own guard: a message delivered late (after a local timeout
+            // Guarded on .awaitingReply, mirroring awaitingReplyDeadline's own
+            // onExpired guard: a message delivered late (after a local timeout
             // already surfaced its own error and started tearing the room
             // down) must not overwrite errorMessage with a second, redundant
             // one -- errorMessage is a plain last-write-wins property, not
@@ -861,6 +1273,75 @@ extension VoiceSessionController: RoomDelegate {
     }
 }
 
+// MARK: - Extendable deadline (reply-watchdog refactor)
+
+/// A one-shot deadline that fires `onExpired` after `duration` seconds
+/// unless `extend()` keeps pushing it back out -- but never past
+/// `maxTotalDuration` measured from `start()`, however many times
+/// `extend()` is called. This is the general shape `awaitingReplyTimeout`/
+/// `maxAwaitingReplyDuration` always needed (tolerate an arbitrarily long
+/// reply, but never hang forever if whatever's supposed to call `extend()`
+/// gets stuck) -- pulled into its own `@MainActor` type (not detached from
+/// any actor: the only caller, `VoiceSessionController`, is itself
+/// `@MainActor`, and `onExpired` needs to touch its isolated state) so that
+/// caller no longer has to hand-roll the reset-with-a-cap bookkeeping
+/// inline. Extracted specifically because `checkForQuiet()` -- whose only
+/// real job is deciding whether reply audio has gone quiet -- used to
+/// reach directly into this timeout's own scheduling/elapsed-time
+/// bookkeeping to keep it alive, coupling two genuinely separate concerns
+/// (is the audio quiet vs. has the reply watchdog expired) into one
+/// function. `checkForQuiet()` now just calls `extend()`; this type owns
+/// deciding whether that's still allowed.
+@MainActor
+private final class ExtendableDeadline {
+    private let duration: TimeInterval
+    private let maxTotalDuration: TimeInterval
+    private let onExpired: () async -> Void
+
+    private var task: Task<Void, Never>?
+    private var startedAt: Date?
+
+    init(duration: TimeInterval, maxTotalDuration: TimeInterval, onExpired: @escaping () async -> Void) {
+        self.duration = duration
+        self.maxTotalDuration = maxTotalDuration
+        self.onExpired = onExpired
+    }
+
+    /// Starts the deadline running from now. Safe to call again later (e.g.
+    /// a new voice turn) -- resets `startedAt`, so `maxTotalDuration` is
+    /// measured from this call, not some earlier one.
+    func start() {
+        startedAt = Date()
+        reschedule()
+    }
+
+    /// Pushes the deadline `duration` seconds further out from now -- but
+    /// only while still within `maxTotalDuration` of the `start()` call.
+    /// Past that, this is a no-op: whatever's already scheduled fires on
+    /// its own, exactly as if `extend()` were never called again. Also a
+    /// no-op if `start()` was never called (nothing to extend).
+    func extend() {
+        guard let startedAt, Date().timeIntervalSince(startedAt) < maxTotalDuration else { return }
+        reschedule()
+    }
+
+    /// Stops the deadline entirely -- no `onExpired` call, nothing pending.
+    func cancel() {
+        task?.cancel()
+        task = nil
+        startedAt = nil
+    }
+
+    private func reschedule() {
+        task?.cancel()
+        task = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64((self?.duration ?? 0) * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            await self.onExpired()
+        }
+    }
+}
+
 // MARK: - Remote audio capture renderer
 
 /// Taps PCM frames from the subscribed reply track for local replay
@@ -878,20 +1359,66 @@ extension VoiceSessionController: RoomDelegate {
 /// callback -- mutable state here is guarded by `lock`, matching that file's
 /// established pattern in this codebase.
 private final class ReplayAudioRenderer: NSObject, AudioRenderer, @unchecked Sendable {
-    /// Called on every frame, off the main thread. Callers are expected to
-    /// hop to whatever actor they need themselves (see `VoiceSessionController.init`).
-    var onFrame: (() -> Void)?
+    /// Called on every frame, off the main thread, with that frame's peak
+    /// amplitude (0...1) -- callers are expected to hop to whatever actor
+    /// they need themselves (see `VoiceSessionController.init`). Passing
+    /// amplitude through here (rather than a bare `Void` signal) is what
+    /// lets a caller distinguish real speech from the continuous low-level
+    /// stream WebRTC delivers even during silence -- see
+    /// `VoiceSessionController.audioFrameReceived`'s doc comment.
+    var onFrame: ((Float) -> Void)?
 
     private let lock = NSLock()
     private var buffers: [AVAudioPCMBuffer] = []
 
     func render(pcmBuffer: AVAudioPCMBuffer) {
+        let peak = Self.peakAmplitude(pcmBuffer)
         if let copy = Self.copy(pcmBuffer) {
             lock.lock()
             buffers.append(copy)
             lock.unlock()
         }
-        onFrame?()
+        onFrame?(peak)
+    }
+
+    /// Max absolute sample value across all channels, normalized to 0...1 --
+    /// the signal `VoiceSessionController.audioFrameReceived` uses to tell
+    /// real speech apart from the continuous low-level stream WebRTC
+    /// delivers even during silence (confirmed live via temporary
+    /// diagnostic logging: frames arriving every ~10ms with zero gap for
+    /// the ENTIRE `.awaitingReply` window, not just while actually
+    /// speaking -- a pure frame-arrival-gap heuristic can never detect
+    /// quiet against that). LiveKit/WebRTC delivers Int16 PCM in practice
+    /// (confirmed live: `floatChannelData` was `nil` for every single frame
+    /// logged), so Int16 is checked first, not as a fallback -- an
+    /// AVAudioPCMBuffer only ever populates ONE of these three based on its
+    /// own `format`, never more than one.
+    private static func peakAmplitude(_ buffer: AVAudioPCMBuffer) -> Float {
+        let frameCount = Int(buffer.frameLength)
+        let channelCount = Int(buffer.format.channelCount)
+        guard frameCount > 0, channelCount > 0 else { return 0 }
+
+        if let channelData = buffer.int16ChannelData {
+            var peak: Int16 = 0
+            for channel in 0..<channelCount {
+                let samples = channelData[channel]
+                for i in 0..<frameCount {
+                    peak = max(peak, samples[i].magnitude == Int16.min.magnitude ? Int16.max : abs(samples[i]))
+                }
+            }
+            return Float(peak) / Float(Int16.max)
+        }
+        if let channelData = buffer.floatChannelData {
+            var peak: Float = 0
+            for channel in 0..<channelCount {
+                let samples = channelData[channel]
+                for i in 0..<frameCount {
+                    peak = max(peak, abs(samples[i]))
+                }
+            }
+            return peak
+        }
+        return 0
     }
 
     /// Returns everything captured since the last drain and clears the
@@ -974,6 +1501,11 @@ private struct ContextSeedMessage: Encodable {
 private struct ContextSeedEntry: Encodable {
     let role: String
     let content: String
+}
+
+private struct LocationSeedMessage: Encodable {
+    let type: String
+    let location: String
 }
 
 private enum VoiceSessionError: LocalizedError {

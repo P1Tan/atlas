@@ -12,6 +12,12 @@ said on a Tuesday means the Thursday two days away), not the "skip a week"
 reading some dialects use. Since every event is reviewed and confirmed by
 the user before being written (confirm-before-write invariant), a
 convention-driven day is easily corrected rather than silently wrong.
+
+Matching convention for "this weekend" / bare "weekend": the coming
+Saturday, except when the reference date is already a Saturday or Sunday,
+in which case it's that same day -- an unmodified weekend phrase never
+resolves into the past and never skips past the weekend already in
+progress. "next weekend" always moves to a later Saturday.
 """
 
 import re
@@ -49,6 +55,12 @@ _WEEKDAY_RE = re.compile(
     re.IGNORECASE,
 )
 _ORDINAL_DAY_RE = re.compile(r"\b(?:the\s+)?(?P<day>\d{1,2})(st|nd|rd|th)\b", re.IGNORECASE)
+_MONTH_NAMES_RE = re.compile(
+    r"\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|"
+    r"august|aug|september|sept|sep|october|oct|november|nov|december|dec)\b",
+    re.IGNORECASE,
+)
+_WEEKEND_RE = re.compile(r"\b(?P<modifier>next|this)?\s*weekend\b", re.IGNORECASE)
 _NOON_RE = re.compile(r"\bnoon\b", re.IGNORECASE)
 _MIDNIGHT_RE = re.compile(r"\bmidnight\b", re.IGNORECASE)
 _TIME_WITH_MERIDIEM_RE = re.compile(
@@ -141,10 +153,73 @@ def _resolve_date_part(phrase: str, reference_date: date) -> Optional[date]:
         return reference_date + timedelta(days=1)
     if "today" in lower or "tonight" in lower:
         return reference_date
+
+    # Must precede the "next week" substring check below -- "next weekend"
+    # contains "next week" as a literal substring, so without this it was
+    # silently resolving to "a week from today" (same weekday) instead of
+    # the coming Saturday.
+    weekend_match = _WEEKEND_RE.search(lower)
+    if weekend_match:
+        modifier = (weekend_match.group("modifier") or "").lower()
+        # Review finding F9(a): said DURING the weekend, an unmodified
+        # "this weekend"/"weekend" means the weekend you're already in, so
+        # it resolves to today (Saturday -> today, which the arithmetic
+        # below already did; Sunday -> today, which it did NOT -- it
+        # resolved to the Saturday six days out, i.e. next weekend). One
+        # consistent rule, stated so it can be corrected rather than
+        # guessed at: an unmodified weekend phrase never resolves into the
+        # past and never skips the weekend in progress.
+        if modifier != "next" and reference_date.weekday() in (5, 6):
+            return reference_date
+        days_ahead = (5 - reference_date.weekday()) % 7  # 5 = Saturday
+        if modifier == "next":
+            if days_ahead == 0:
+                days_ahead = 7
+        return reference_date + timedelta(days=days_ahead)
+
+    # An explicit month name (found live: "December 3rd", "March 15th,
+    # 2027") must be resolved by dateutil, which understands month+day(+year)
+    # together -- checked BEFORE the bare-ordinal-day heuristic further down,
+    # which would otherwise match just the "3rd"/"15th" part via
+    # _ORDINAL_DAY_RE, discard the month (and any explicit year) entirely,
+    # and substitute "nearest upcoming occurrence of that day-of-month"
+    # instead -- silently resolving to the wrong month (sometimes the wrong
+    # year) rather than surfacing the ambiguity, which is exactly what this
+    # module's own docstring says it must never do.
+    #
+    # Review finding F9(b): committing to this branch on the REGEX match
+    # alone was too eager. "may" is also an ordinary modal verb, so a
+    # date_phrase like "may be Thursday" landed here, failed
+    # dateutil(fuzzy=False), and returned None -- where the weekday branch
+    # further down had resolved it to the upcoming Thursday before the
+    # month-name branch existed. The branch is only taken now if dateutil
+    # actually parses something; otherwise the remaining heuristics get
+    # their turn.
+    saw_month_name = bool(_MONTH_NAMES_RE.search(lower))
+    if saw_month_name:
+        try:
+            parsed = dateutil_parser.parse(
+                phrase.strip(), default=datetime.combine(reference_date, time.min), fuzzy=False
+            )
+            return parsed.date()
+        except (ValueError, OverflowError):
+            pass
+
+    if "next month" in lower:
+        # "the 3rd of next month" -- found live: this branch used to return
+        # unconditionally (same day-of-month, one month out), discarding an
+        # explicit ordinal day the same way the month-name case above did.
+        ordinal_match = _ORDINAL_DAY_RE.search(lower)
+        if ordinal_match:
+            day = int(ordinal_match.group("day"))
+            target_month = reference_date + relativedelta(months=1)
+            last_day_of_month = (
+                target_month.replace(day=1) + relativedelta(months=1) - timedelta(days=1)
+            ).day
+            return target_month.replace(day=min(day, last_day_of_month))
+        return reference_date + relativedelta(months=1)
     if "next week" in lower:
         return reference_date + timedelta(days=7)
-    if "next month" in lower:
-        return reference_date + relativedelta(months=1)
 
     weekday_match = _WEEKDAY_RE.search(lower)
     if weekday_match:
@@ -156,7 +231,16 @@ def _resolve_date_part(phrase: str, reference_date: date) -> Optional[date]:
         return reference_date + timedelta(days=days_ahead)
 
     ordinal_match = _ORDINAL_DAY_RE.search(lower)
-    if ordinal_match:
+    if ordinal_match and not saw_month_name:
+        # `not saw_month_name` keeps the fall-through above from quietly
+        # undoing the reason the month-name branch is ordered first: for an
+        # unparseable phrase that really does name a month ("Dec 3rd or
+        # 4th"), matching the bare "3rd" here would drop "Dec" and resolve
+        # to the 3rd of the nearest month instead -- a guess, and the wrong
+        # one. Such a phrase stays unresolved, exactly as before this fix;
+        # only the heuristics that can't silently swallow a month name
+        # (weekday, "next week"/"next month") now get a turn after a failed
+        # month parse.
         day = int(ordinal_match.group("day"))
         return _next_occurrence_of_day(reference_date, day)
 

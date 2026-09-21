@@ -38,6 +38,7 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         NSCalendarsFullAccessUsageDescription: "Atlas needs calendar access to add events you've confirmed from extracted emails."
         NSMicrophoneUsageDescription: "Atlas uses your microphone to hear you when you talk to it."
+        NSLocationWhenInUseUsageDescription: "Atlas uses your approximate location so it can answer location-based questions (like the weather) without you having to say where you are."
         NSSpeechRecognitionUsageDescription: "Atlas transcribes your speech on-device to understand what you say."
         CFBundleURLTypes:
           - CFBundleURLName: com.p1tan.atlas

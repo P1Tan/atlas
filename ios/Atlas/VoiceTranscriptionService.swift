@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import LiveKit
 import Speech
 
 /// Turn-boundary and transcript events produced by `VoiceTranscriptionService`,
@@ -69,9 +70,18 @@ final class VoiceTranscriptionService: @unchecked Sendable {
     private var analyzeTask: Task<Void, Never>?
     private var resultsTask: Task<Void, Never>?
     private var tapInstalled = false
+    private var sessionRequirement: SessionRequirementHandle?
 
     // First-pass heuristic thresholds -- see the type doc comment above.
-    private let silenceThreshold: Float = 0.02
+    // silenceThreshold lowered from the original 0.02 after real-device
+    // data showed the actual noise floor sitting around 0.0017 and speech
+    // only reaching ~0.003-0.007 with Apple's AGC compressing the dynamic
+    // range (see the AGC-disabling fix in start()) -- 0.02 could never
+    // fire on this hardware. Still a first-pass estimate for the
+    // AGC-disabled case specifically (the logged sample predates that
+    // fix), diagnostic logging is left in place to re-tune with fresh
+    // numbers if this isn't right either.
+    private let silenceThreshold: Float = 0.005
     private let silenceDuration: TimeInterval = 1.5
 
     private let stateLock = NSLock()
@@ -99,6 +109,20 @@ final class VoiceTranscriptionService: @unchecked Sendable {
         guard await requestSpeechPermission() else {
             throw VoiceTranscriptionError.speechRecognitionPermissionDenied
         }
+
+        // Real-device diagnostic found the RMS-threshold silence detector
+        // never fired at all: acquiring a recording SessionRequirement
+        // (see startAudioEngine) makes LiveKit engage Apple's Voice
+        // Processing I/O on the shared hardware input by default, and its
+        // automatic gain control compresses the dynamic range enough that
+        // real speech (observed ~0.003-0.007 RMS) barely rises above the
+        // noise floor (observed ~0.0017 RMS) -- confirmed via a logged
+        // 100+ second real-device sample, not guessed. Disabling AGC
+        // (idempotent; safe to set on every turn) restores a more normal
+        // raw dynamic range for the threshold below to actually work
+        // against. Set before the tap is installed so it applies from the
+        // first captured buffer.
+        AudioManager.shared.isVoiceProcessingAGCEnabled = false
 
         let transcriber = SpeechTranscriber(
             locale: Locale.current,
@@ -158,6 +182,11 @@ final class VoiceTranscriptionService: @unchecked Sendable {
         if audioEngine.isRunning {
             audioEngine.stop()
         }
+        // Recording is only needed while actively capturing the user's
+        // utterance -- release it once that ends, letting LiveKit's own
+        // AudioSessionEngineObserver recompute what the session actually
+        // needs (just playout, for the reply about to arrive).
+        sessionRequirement = nil
 
         analyzerInputContinuation?.finish()
         analyzerInputContinuation = nil
@@ -187,6 +216,53 @@ final class VoiceTranscriptionService: @unchecked Sendable {
     // MARK: - Audio engine
 
     private func startAudioEngine(targetFormat: AVAudioFormat) throws {
+        // Real-device-only crash, never reachable on the Simulator (whose
+        // virtual input node returns a valid default format regardless of
+        // session state -- confirmed via a real device crash log, this was
+        // never exercised against real hardware before). Nothing in this
+        // app configures AVAudioSession for recording: LiveKit's own
+        // AudioSessionEngineObserver (confirmed via its installed source)
+        // auto-configures the session, but only when ITS OWN engine has an
+        // active track -- iOS never publishes a local mic track to the room
+        // (STT is on-device, per 7.2a/7.2b), so LiveKit never sets
+        // isRecordingEnabled and never requests `.playAndRecord`. Without
+        // recording capability requested somehow, `inputNode.outputFormat`
+        // below can return a degenerate (0 Hz/0 channel) format on a real
+        // device, and `installTap` throws an uncatchable NSException for
+        // it -- SIGABRT, not a Swift error `start()`'s caller could handle.
+        //
+        // FIRST FIX ATTEMPT (reverted): called
+        // AVAudioSession.setCategory/setActive directly. That resolved the
+        // crash, but broke something more subtle discovered on the very
+        // next real-device turn: replayRenderer stopped receiving ANY
+        // frames from the subscribed reply track -- checkForQuiet() never
+        // ran, replyAudioFinished never became true, and every turn hit
+        // the full 30s awaitingReplyTimeout despite the reply audio playing
+        // audibly through the speaker the whole time (LiveKit's own default
+        // output routing kept working; only the custom render tap broke).
+        // Root cause: reconfiguring AVAudioSession directly bypasses
+        // LiveKit's own session-requirement coordination
+        // (AudioSessionEngineObserver) entirely -- WebRTC's audio unit
+        // reacts to an external, uncoordinated session change by rebuilding
+        // its internal graph, and the custom AudioRenderer attachment
+        // doesn't survive that rebuild even though default playback does.
+        //
+        // The correct fix is LiveKit's own documented mechanism for
+        // exactly this situation ("keep the audio session active from
+        // external components... independently of the WebRTC engine
+        // lifecycle"): register a recording requirement through
+        // AudioManager instead of touching AVAudioSession directly. This
+        // lets LiveKit's own observer fold recording into whatever
+        // category/mode IT decides on -- no external reconfiguration for
+        // its audio graph to react to.
+        do {
+            sessionRequirement = try AudioManager.shared.acquireSessionRequirement(.recordingOnly)
+        } catch {
+            throw VoiceTranscriptionError.audioEngineFailed(
+                "could not configure the audio session: \(error.localizedDescription)"
+            )
+        }
+
         let inputNode = audioEngine.inputNode
         let nativeFormat = inputNode.outputFormat(forBus: 0)
 
@@ -205,6 +281,7 @@ final class VoiceTranscriptionService: @unchecked Sendable {
         } catch {
             inputNode.removeTap(onBus: 0)
             tapInstalled = false
+            sessionRequirement = nil
             throw VoiceTranscriptionError.audioEngineFailed(error.localizedDescription)
         }
     }

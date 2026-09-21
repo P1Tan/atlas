@@ -43,6 +43,10 @@ class FakeMemoryStore:
         self.received_user_id = user_id
         self.received_fact_text = fact_text
 
+    def update_fact(self, user_id: str, fact_id: str, fact_text: str):
+        # Part of the MemoryStore Protocol; no tool edits existing facts.
+        return None
+
 
 def _build_tools(
     extractor=None, weather_client=None, search_client=None, user_id="test-user-id", memory_store=None

@@ -62,6 +62,11 @@ struct ChatRequest: Encodable {
     let messages: [ChatMessage]
     let referenceDatetime: String
     let timezone: String
+    /// "City, Region" from `LocationProvider`, or `nil` if permission was
+    /// never granted or a fix couldn't be obtained -- an omitted/nil value
+    /// just means the model has no location context this turn, not an
+    /// error condition.
+    let userLocation: String?
 }
 
 struct ChatResponse: Decodable {
