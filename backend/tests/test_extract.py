@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 from app.extraction import ExtractedEventDraft
 from app.main import app, get_extractor
+from app.rate_limit import RateLimiter, get_extract_rate_limiter
+from app.supabase_client import AuthenticatedUser, get_current_user
 
 EXPECTED_EVENT_KEYS = {
     "title",
@@ -43,6 +45,19 @@ def _valid_request() -> dict:
 
 def _override_extractor(drafts: List[ExtractedEventDraft]) -> None:
     app.dependency_overrides[get_extractor] = lambda: FakeExtractor(drafts)
+
+
+def setup_function() -> None:
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        id="test-user-id", email="test@example.com"
+    )
+    # A fresh, effectively-unlimited limiter per test, so the process-wide
+    # default one doesn't carry counts across tests (this route's real
+    # per-minute limit is smaller than the number of tests in this file
+    # that call it). The test that cares about limiting overrides this
+    # again with a tight one.
+    permissive = RateLimiter(per_window_limit=1000, window_seconds=60, daily_limit=10000)
+    app.dependency_overrides[get_extract_rate_limiter] = lambda: permissive
 
 
 def teardown_function() -> None:
@@ -172,3 +187,41 @@ def test_extract_returns_502_on_extractor_failure() -> None:
 
     response = client.post("/extract", json=_valid_request())
     assert response.status_code == 502
+
+
+def test_extract_rejects_an_unauthenticated_request() -> None:
+    """The LLM call this route spends must not be reachable without a token
+    -- previously anyone who could reach the port could trigger a real
+    extraction."""
+    del app.dependency_overrides[get_current_user]
+
+    class MustNotBeCalledExtractor:
+        model_name = "must-not-be-called"
+
+        def extract(self, text: str) -> List[ExtractedEventDraft]:
+            raise AssertionError("extractor reached without authentication")
+
+    app.dependency_overrides[get_extractor] = lambda: MustNotBeCalledExtractor()
+    client = TestClient(app)
+
+    response = client.post("/extract", json=_valid_request())
+    assert response.status_code == 401
+    assert response.json()["detail"] == "missing bearer token"
+
+
+def test_extract_returns_429_once_the_rate_limit_is_exceeded() -> None:
+    """Confirms enforce_extract_rate_limit is actually wired into the route,
+    via a tiny override limiter rather than the real one."""
+    _override_extractor([])
+    # One instance, reused across both requests -- the override is called
+    # per request, so building it inside the lambda would hand each request
+    # a limiter with an empty window.
+    limiter = RateLimiter(per_window_limit=1, window_seconds=60, daily_limit=100)
+    app.dependency_overrides[get_extract_rate_limiter] = lambda: limiter
+    client = TestClient(app)
+
+    first = client.post("/extract", json=_valid_request())
+    second = client.post("/extract", json=_valid_request())
+
+    assert first.status_code == 200
+    assert second.status_code == 429

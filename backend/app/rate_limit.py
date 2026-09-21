@@ -9,16 +9,13 @@ premature infrastructure for a personal, unscaled project. Revisit if this
 ever runs as multiple workers/instances, where per-process state would stop
 being an accurate shared view.
 
-Applied to `/chat`, `/voice/token`, `/facts`, and `/gmail/candidates` --
-the endpoints that have an authenticated user to key a limit on (`/facts`'s
-own limit added in a later bug audit: authenticated same as the other two,
-and had no limiter at all despite that; `/gmail/candidates` became
-limitable only once it gained `get_current_user`, in the same change that
-fixed its missing auth). `/extract` is still unauthenticated (a known
-follow-up tracked in `CLAUDE.md` since Milestone 6.1) -- there's no
-per-user identity to limit on there yet, and bolting on a cruder global
-limit would be a half-fix for a different, separate problem (missing auth)
-rather than a real solution; left alone here, still tracked as open.
+Applied to `/chat`, `/voice/token`, `/facts`, `/gmail/candidates`, and
+`/extract` -- every endpoint that has an authenticated user to key a limit
+on (`/facts`'s own limit added in a later bug audit: authenticated same as
+the other two, and had no limiter at all despite that; `/gmail/candidates`
+and `/extract` became limitable only once each gained `get_current_user`,
+in the same change that fixed its missing auth). `/health` is deliberately
+left open: no user, no cost, and it's the liveness check.
 """
 
 import threading
@@ -31,6 +28,8 @@ from fastapi import Depends, HTTPException
 from app.config import (
     CHAT_DAILY_USAGE_CAP,
     CHAT_RATE_LIMIT_PER_MINUTE,
+    EXTRACT_DAILY_USAGE_CAP,
+    EXTRACT_RATE_LIMIT_PER_MINUTE,
     FACTS_DAILY_USAGE_CAP,
     FACTS_RATE_LIMIT_PER_MINUTE,
     GMAIL_CANDIDATES_DAILY_USAGE_CAP,
@@ -118,6 +117,11 @@ _default_gmail_candidates_limiter = RateLimiter(
     window_seconds=60.0,
     daily_limit=GMAIL_CANDIDATES_DAILY_USAGE_CAP,
 )
+_default_extract_limiter = RateLimiter(
+    per_window_limit=EXTRACT_RATE_LIMIT_PER_MINUTE,
+    window_seconds=60.0,
+    daily_limit=EXTRACT_DAILY_USAGE_CAP,
+)
 
 
 def get_chat_rate_limiter() -> RateLimiter:
@@ -137,6 +141,10 @@ def get_facts_rate_limiter() -> RateLimiter:
 
 def get_gmail_candidates_rate_limiter() -> RateLimiter:
     return _default_gmail_candidates_limiter
+
+
+def get_extract_rate_limiter() -> RateLimiter:
+    return _default_extract_limiter
 
 
 def enforce_chat_rate_limit(
@@ -163,5 +171,12 @@ def enforce_facts_rate_limit(
 def enforce_gmail_candidates_rate_limit(
     user: AuthenticatedUser = Depends(get_current_user),
     limiter: RateLimiter = Depends(get_gmail_candidates_rate_limiter),
+) -> None:
+    limiter.check(user.id)
+
+
+def enforce_extract_rate_limit(
+    user: AuthenticatedUser = Depends(get_current_user),
+    limiter: RateLimiter = Depends(get_extract_rate_limiter),
 ) -> None:
     limiter.check(user.id)

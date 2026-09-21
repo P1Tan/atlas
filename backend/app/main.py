@@ -9,6 +9,8 @@ from app.extraction_pipeline import extract_events_from_text
 from app.gmail_routes import router as gmail_router
 from app.memory_routes import router as memory_router
 from app.models import Event, ExtractRequest
+from app.rate_limit import enforce_extract_rate_limit
+from app.supabase_client import AuthenticatedUser, get_current_user
 from app.voice_routes import router as voice_router
 
 # Without this, every logger.info() in the app (extraction/model logging,
@@ -34,8 +36,20 @@ def health() -> dict[str, str]:
 
 @app.post("/extract")
 def extract(
-    request: ExtractRequest, extractor: EventExtractor = Depends(get_extractor)
+    request: ExtractRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+    _rate_limit: None = Depends(enforce_extract_rate_limit),
+    extractor: EventExtractor = Depends(get_extractor),
 ) -> list[Event]:
+    """Extracts event candidates from a block of user-supplied text.
+
+    `user` is unused in the body on purpose: extraction is stateless and
+    operates only on the text in the request, so there is nothing per-user
+    to look up. The dependency is here because each call spends a real LLM
+    extraction, and until now anyone who could reach the port could spend
+    it without presenting a token -- and without an identity there was no
+    key to rate-limit on either (see `app.rate_limit`).
+    """
     try:
         return extract_events_from_text(
             request.text, request.reference_datetime, request.timezone, extractor

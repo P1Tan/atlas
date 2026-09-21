@@ -31,7 +31,14 @@ final class ExtractionViewModel: ObservableObject {
         return decoder
     }()
 
-    func extract(text: String) async {
+    /// `accessToken` is the caller's current Supabase access token --
+    /// `/extract` is now an authenticated endpoint (it bills the extraction
+    /// against the signed-in user's rate limit and daily cap), so the same
+    /// `Authorization: Bearer` header `checkGmail` sends is required here
+    /// too. Passed in rather than fetched, for the same reason as there:
+    /// refreshing the session is `AuthViewModel`'s job and this view model
+    /// has no business owning a second path to it.
+    func extract(text: String, accessToken: String?) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -55,6 +62,9 @@ final class ExtractionViewModel: ObservableObject {
             var urlRequest = URLRequest(url: URL(string: "\(baseURL)/extract")!)
             urlRequest.httpMethod = "POST"
             urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let accessToken {
+                urlRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            }
 
             let encoder = JSONEncoder()
             encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -67,7 +77,20 @@ final class ExtractionViewModel: ObservableObject {
                 return
             }
             guard http.statusCode == 200 else {
-                errorMessage = "Extraction failed (server returned \(http.statusCode))."
+                // The two authenticated-endpoint failures the user can
+                // actually act on. "server returned 401" tells them nothing
+                // about the one thing that fixes it (a fresh session), and a
+                // 429 is not a failure at all -- it's "not yet," so it must
+                // not read like extraction broke. Everything else keeps the
+                // status code, which is all the detail there is for it.
+                switch http.statusCode {
+                case 401:
+                    errorMessage = "Your session has expired. Sign out and back in."
+                case 429:
+                    errorMessage = "You're extracting too quickly. Please wait a moment."
+                default:
+                    errorMessage = "Extraction failed (server returned \(http.statusCode))."
+                }
                 hasSearched = true
                 return
             }

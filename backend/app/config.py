@@ -90,3 +90,11 @@ GMAIL_CANDIDATES_RATE_LIMIT_PER_MINUTE = int(
     os.getenv("ATLAS_GMAIL_CANDIDATES_RATE_LIMIT_PER_MINUTE", "5")
 )
 GMAIL_CANDIDATES_DAILY_USAGE_CAP = int(os.getenv("ATLAS_GMAIL_CANDIDATES_DAILY_USAGE_CAP", "100"))
+# /extract is one LLM extraction per call, on text the user pasted or shared
+# in -- interactive, so a handful a minute is already generous (the iOS app
+# fires one per paste/share, never in a loop). Smaller per-minute number than
+# /chat because there's no conversational back-and-forth driving repeat calls,
+# larger than /gmail/candidates because a single call here is one extraction,
+# not up to 20.
+EXTRACT_RATE_LIMIT_PER_MINUTE = int(os.getenv("ATLAS_EXTRACT_RATE_LIMIT_PER_MINUTE", "10"))
+EXTRACT_DAILY_USAGE_CAP = int(os.getenv("ATLAS_EXTRACT_DAILY_USAGE_CAP", "200"))

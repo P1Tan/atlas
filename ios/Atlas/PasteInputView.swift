@@ -85,7 +85,11 @@ struct PasteInputView: View {
     private func consumePendingShareText(_ text: String?) {
         guard let text else { return }
         shareInbox.pendingText = nil
-        Task { await viewModel.extract(text: text) }
+        // `/extract` is authenticated now, so the token has to be fetched
+        // before the call -- and fetching it is itself async (it may refresh
+        // an expired session), which is why it happens inside the Task the
+        // hand-off already needed rather than at the call site.
+        Task { await viewModel.extract(text: text, accessToken: await authViewModel.currentAccessToken()) }
     }
 
     @ViewBuilder
