@@ -4,9 +4,17 @@ options:
   deploymentTarget:
     iOS: "26.0"
   createIntermediateGroups: true
+# Declared explicitly rather than leaning on XcodeGen's implicit default
+# pair, so the Debug/Release split is visible in the one file that is the
+# source of truth. The `release` type is what makes SwiftPM build the
+# Supabase/LiveKit dependencies optimized too, not just our own code.
+configs:
+  Debug: debug
+  Release: release
 # Real code signing (added once a physical device came into the picture --
-# no Apple Developer account existed on this machine before, hence every
-# target's own CODE_SIGNING_ALLOWED: NO below). A free personal team is
+# no Apple Developer account existed on this machine before, so every target
+# used to carry its own CODE_SIGNING_ALLOWED: NO; those are all gone now).
+# A free personal team is
 # enough for on-device testing (Peter Tan (Personal Team), no paid Developer
 # Program needed for this app -- no push notifications/App Groups/other
 # capability that would require one). Project-level so every target
@@ -16,6 +24,43 @@ options:
 settings:
   base:
     DEVELOPMENT_TEAM: 893CXP2LVF
+  # XcodeGen's setting presets already supply most of Apple's stock
+  # Debug/Release values, but they do it invisibly and the Release half had
+  # never actually been compiled -- the schemes only ever ran Debug. Pinned
+  # here so the contrast between the two is a deliberate, auditable choice
+  # instead of a preset side effect, and so a future XcodeGen version (or
+  # someone setting `settingPresets: none`) can't silently flip the
+  # `#if DEBUG` seams the entire UI test suite depends on.
+  configs:
+    Debug:
+      # Load-bearing: AuthViewModel.bootstrap()'s ATLAS_TEST_ACCESS_TOKEN /
+      # ATLAS_TEST_REFRESH_TOKEN / ATLAS_TEST_FORCE_SIGNED_OUT seams and
+      # AtlasApp's ATLAS_TEST_SHARE_TEXT seam are all `#if DEBUG`, so every
+      # XCUITest that signs in depends on this symbol being defined.
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      ENABLE_TESTABILITY: YES
+    Release:
+      # Deliberately NOT DEBUG. This is the setting that compiles the
+      # environment-variable session-injection seams out of a shipping
+      # binary; `strings` on the Release app must not contain
+      # ATLAS_TEST_ACCESS_TOKEN or ATLAS_TEST_SHARE_TEXT.
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: RELEASE
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      SWIFT_COMPILATION_MODE: wholemodule
+      # No `@testable import` into a shipping build: testability emits extra
+      # symbols and disables cross-module optimization.
+      ENABLE_TESTABILITY: NO
+      # Ship stripped, keep a dSYM alongside so crash reports symbolicate.
+      DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+      DEAD_CODE_STRIPPING: YES
+      # Runs the bundle/product validation that App Store submission applies,
+      # here rather than for the first time at upload.
+      VALIDATE_PRODUCT: YES
+      ENABLE_NS_ASSERTIONS: NO
+      # Build every slice, not just the active one -- a device archive must
+      # not depend on which Mac produced it.
+      ONLY_ACTIVE_ARCH: NO
 packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
@@ -126,9 +171,18 @@ schemes:
         AtlasShareExtension: all
         AtlasWidget: all
         AtlasUITests: [test]
+    # Run/test stay Debug (the UI tests need the `#if DEBUG` seams); the
+    # actions that produce something shippable are pinned to Release so
+    # archiving can never quietly ship an unoptimized, seam-carrying build.
     run:
       config: Debug
     test:
       config: Debug
       targets:
         - AtlasUITests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

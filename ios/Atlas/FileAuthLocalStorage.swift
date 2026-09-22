@@ -4,10 +4,15 @@ import Supabase
 /// A file-backed `AuthLocalStorage`, used instead of the Supabase SDK's
 /// default `KeychainLocalStorage`.
 ///
-/// This project builds with code signing disabled (`CODE_SIGNING_ALLOWED: NO`
-/// in `project.yml`, so Simulator development doesn't need an Apple
-/// Developer account). Keychain writes require a valid code signature;
-/// without one, `SecItemAdd` fails, and the SDK's internal `SessionStorage`
+/// Used in Debug builds only -- `AuthViewModel.init()` selects this under
+/// `#if DEBUG` and `KeychainLocalStorage()` otherwise, so a Release build
+/// never contains this type at all (verified: `FileAuthLocalStorage` and its
+/// "AtlasAuth" directory name are both absent from the Release binaries).
+///
+/// It exists because this project originally built with code signing
+/// disabled (`CODE_SIGNING_ALLOWED: NO`), so Simulator development didn't
+/// need an Apple Developer account. Keychain writes require a valid code
+/// signature; without one, `SecItemAdd` fails, and the SDK's internal `SessionStorage`
 /// wrapper swallows that failure and only logs it (see
 /// `SessionStorage.store` in the SDK source) -- so `setSession()` reports
 /// success while nothing is ever actually persisted, and every later read
@@ -18,9 +23,8 @@ import Supabase
 /// Stores the session as a plain file in the app's sandboxed Application
 /// Support directory instead -- not encrypted at rest the way Keychain is,
 /// an accepted trade-off for local development on a personal,
-/// non-distributed app. If code signing is ever enabled (e.g. for TestFlight
-/// or App Store distribution), switch back to `KeychainLocalStorage()`,
-/// which will work correctly once the app has a real signing identity.
+/// non-distributed app -- and one that never reaches a shipping build, since
+/// the `#if DEBUG` switch above already hands Release the real Keychain.
 struct FileAuthLocalStorage: AuthLocalStorage {
     private let directory: URL
 
