@@ -1,14 +1,13 @@
 import json
 import logging
-import os
-import tempfile
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 
 from app.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
+from app.supabase_client import get_supabase_client
 
 logger = logging.getLogger("atlas.gmail")
 
@@ -16,7 +15,14 @@ logger = logging.getLogger("atlas.gmail")
 # to Gmail.
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-TOKEN_PATH = Path(__file__).resolve().parent.parent / ".data" / "google_token.json"
+# One row per Supabase user, user_id as the primary key -- see
+# migrations/0003_user_google_credentials.sql. This replaced a single shared
+# server-side token file (backend/.data/google_token.json): with more than
+# one signed-in user the second person to connect Gmail overwrote the first,
+# and every user's /gmail/candidates then read whichever inbox happened to
+# be stored. Every function here takes a user_id for that reason -- there is
+# no such thing as "the" Google credential anymore.
+CREDENTIALS_TABLE = "user_google_credentials"
 
 
 def _client_config() -> dict:
@@ -39,52 +45,80 @@ def build_flow(state: Optional[str] = None, code_verifier: Optional[str] = None)
     return flow
 
 
-def save_credentials(credentials: Credentials) -> None:
-    # Atomic write (temp file + rename), not a plain write_text() -- found
-    # live: a plain write can leave a truncated/invalid JSON file behind if
-    # the process is killed mid-write (a deploy restart, OOM, etc. landing
-    # at exactly the wrong moment), which load_credentials() previously had
-    # no way to recover from short of a manual fix. os.replace on the same
-    # filesystem is atomic, so a reader only ever sees the old complete file
-    # or the new complete file, never a partial one.
-    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path_str = tempfile.mkstemp(dir=TOKEN_PATH.parent, prefix=".google_token_", suffix=".tmp")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(credentials.to_json())
-        tmp_path.chmod(0o600)
-        os.replace(tmp_path, TOKEN_PATH)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+def save_credentials(user_id: str, credentials: Credentials) -> None:
+    """Store (replacing any existing one) this user's Google credential.
+
+    A single upsert on the user_id primary key, so reconnecting Gmail -- or
+    persisting a refreshed access token -- overwrites in place rather than
+    accumulating rows. The file-based version this replaced wrote a temp
+    file and os.replace'd it so a process killed mid-write couldn't leave
+    truncated JSON behind; a one-row upsert is already atomic, so that
+    machinery is gone with nothing to replace it.
+    """
+    get_supabase_client().table(CREDENTIALS_TABLE).upsert(
+        {
+            "user_id": user_id,
+            # to_json() returns a JSON *string*; the column is jsonb, so
+            # hand PostgREST the dict itself rather than a string stuffed
+            # into a JSON string.
+            "credentials": json.loads(credentials.to_json()),
+            # `default now()` only fires on insert, and this is usually an
+            # update of an existing row.
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        on_conflict="user_id",
+    ).execute()
 
 
-def load_credentials() -> Optional[Credentials]:
-    if not TOKEN_PATH.exists():
+def load_credentials(user_id: str) -> Optional[Credentials]:
+    """This user's stored Google credential, or None if there isn't a usable
+    one. The .eq("user_id", ...) filter is the sole authorization check --
+    the backend uses the service_role client, which bypasses Row Level
+    Security, so (exactly as in memory.delete_fact) that filter is the only
+    thing standing between one user and another user's mailbox."""
+    response = (
+        get_supabase_client()
+        .table(CREDENTIALS_TABLE)
+        .select("credentials")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    rows = response.data or []
+    if not rows:
         return None
     try:
-        data = json.loads(TOKEN_PATH.read_text())
-        return Credentials.from_authorized_user_info(data, SCOPES)
+        return Credentials.from_authorized_user_info(rows[0]["credentials"], SCOPES)
     except Exception:
-        # Found live: an unwrapped call here surfaced as a bare 500 with no
-        # detail on a corrupted token file, while /auth/google/status kept
-        # reporting connected=true regardless (it only checks file
-        # existence) -- no signal to the client that reconnecting would
-        # fix it. Every caller of load_credentials() already treats None as
-        # "not connected," so collapsing any unreadable/malformed file into
-        # that same, already-handled case is correct, not a swallowed
-        # error -- logged so it's still observable, and cleared so
-        # has_credentials()/status stop claiming a connection that doesn't
-        # actually work.
-        logger.exception("stored Google credentials file is unreadable, clearing it")
-        clear_credentials()
+        # Found live (on the file-based version, and just as true of a
+        # malformed stored row): an unwrapped call here surfaced as a bare
+        # 500 with no detail, while /auth/google/status kept reporting
+        # connected=true regardless (it only checks that the credential
+        # exists) -- no signal to the client that reconnecting would fix
+        # it. Every caller already treats None as "not connected," so
+        # collapsing an undecodable credential into that same,
+        # already-handled case is correct, not a swallowed error -- logged
+        # so it stays observable, and cleared so has_credentials()/status
+        # stop claiming a connection that doesn't actually work. A real DB
+        # error is deliberately NOT caught here: that's not "this user
+        # isn't connected," and it propagates like every other Supabase
+        # failure in the app.
+        logger.exception("stored Google credentials are unreadable, clearing them")
+        clear_credentials(user_id)
         return None
 
 
-def has_credentials() -> bool:
-    return TOKEN_PATH.exists()
+def has_credentials(user_id: str) -> bool:
+    response = (
+        get_supabase_client()
+        .table(CREDENTIALS_TABLE)
+        .select("user_id")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    return bool(response.data)
 
 
-def clear_credentials() -> None:
-    TOKEN_PATH.unlink(missing_ok=True)
+def clear_credentials(user_id: str) -> None:
+    """Delete only this user's credential. Filtering on user_id is what
+    keeps a disconnect from being a disconnect for everyone."""
+    get_supabase_client().table(CREDENTIALS_TABLE).delete().eq("user_id", user_id).execute()

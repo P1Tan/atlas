@@ -60,17 +60,35 @@ struct PasteInputView: View {
             // alone would miss a value that was already set before this
             // view appeared, so also check on appear.
             consumePendingShareText(shareInbox.pendingText)
-            await viewModel.refreshGmailStatus()
+            await viewModel.refreshGmailStatus(accessToken: await authViewModel.currentAccessToken())
         }
+        // Still the thing that flips "Connect Gmail" to "Check Gmail" after
+        // the user finishes consent in Safari and comes back -- the status
+        // call just needs the token now, and fetching one is async (it may
+        // refresh an expired session), which the Task this already had
+        // absorbs.
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
-            Task { await viewModel.refreshGmailStatus() }
+            Task { await viewModel.refreshGmailStatus(accessToken: await authViewModel.currentAccessToken()) }
         }
         .alert("Connect Gmail?", isPresented: $showingGmailConsent) {
             Button("Cancel", role: .cancel) {}
             Button("Continue to Google Sign-In") {
-                if let url = URL(string: "\(AtlasAPI.baseURL)/auth/google/login") {
-                    UIApplication.shared.open(url)
+                // The consent URL can't be built here any more: `/login` is
+                // gone, and its replacement is an authenticated POST whose
+                // whole point is that the backend learns which user this
+                // login belongs to before Google is ever involved. So the
+                // browser open waits on a round trip.
+                Task {
+                    if let url = await viewModel.startGmailConnect(
+                        accessToken: await authViewModel.currentAccessToken()
+                    ) {
+                        // The async `open` overload, since this is now
+                        // inside a Task -- the discarded Bool only reports
+                        // whether iOS could hand the URL off, which says
+                        // nothing about whether consent was completed.
+                        _ = await UIApplication.shared.open(url)
+                    }
                 }
             }
         } message: {

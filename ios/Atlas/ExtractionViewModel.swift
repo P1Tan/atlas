@@ -104,15 +104,99 @@ final class ExtractionViewModel: ObservableObject {
         }
     }
 
-    func refreshGmailStatus() async {
+    /// `accessToken` is the caller's current Supabase access token --
+    /// `/auth/google/status` is authenticated now that Google credentials
+    /// are stored per Supabase user. It answers for the CALLING user only;
+    /// there is no user-independent "is Gmail connected" left to ask for,
+    /// so without the header there is no answer at all, just a 401.
+    ///
+    /// Every failure still collapses to "not connected," but the failures
+    /// are no longer the same thing, which is worth being explicit about: a
+    /// 401 here means the *Atlas* session is bad, not that Gmail was
+    /// disconnected. Showing "Connect Gmail" for it is a safe display
+    /// default rather than a silent lie -- the whole app is gated behind
+    /// sign-in, so a user whose session has really expired is on their way
+    /// back to the sign-in screen regardless, and the worst this costs them
+    /// is a consent round trip they didn't need. The alternative (assume
+    /// connected) would offer a Check button that can only fail. Unlike
+    /// `checkGmail`, nothing is surfaced through `errorMessage`: this runs
+    /// unprompted on appear and on every foreground, and an error banner
+    /// the user did nothing to trigger would be noise.
+    func refreshGmailStatus(accessToken: String?) async {
         struct StatusResponse: Decodable { let connected: Bool }
 
         guard let url = URL(string: "\(baseURL)/auth/google/status") else { return }
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            gmailConnected = try JSONDecoder().decode(StatusResponse.self, from: data).connected
+            var urlRequest = URLRequest(url: url)
+            if let accessToken {
+                urlRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            }
+
+            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                gmailConnected = false
+                return
+            }
+            gmailConnected = try Self.responseDecoder.decode(StatusResponse.self, from: data).connected
         } catch {
             gmailConnected = false
+        }
+    }
+
+    /// Starts the Gmail connect handshake and hands back the Google consent
+    /// URL for the caller to open in a browser.
+    ///
+    /// This replaced a plain `UIApplication.shared.open` of
+    /// `GET /auth/google/login`, which no longer exists. A browser open
+    /// carries no bearer token, so a redirect endpoint could not know whose
+    /// Gmail it was connecting -- fine when the backend kept one shared
+    /// credential, meaningless now that it keeps one per user. The token
+    /// goes on this POST instead, and the `state` in the URL it returns is
+    /// what carries the user's identity through the consent round trip.
+    ///
+    /// Returns nil on failure, having set `errorMessage` -- otherwise a
+    /// failed connect would be completely invisible: the alert dismisses,
+    /// no browser opens, and the button still reads "Connect Gmail" with
+    /// nothing said about why.
+    func startGmailConnect(accessToken: String?) async -> URL? {
+        struct StartResponse: Decodable { let authorizationUrl: String }
+
+        errorMessage = nil
+
+        do {
+            var urlRequest = URLRequest(url: URL(string: "\(baseURL)/auth/google/start")!)
+            urlRequest.httpMethod = "POST"
+            if let accessToken {
+                urlRequest.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            }
+
+            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+            guard let http = response as? HTTPURLResponse else {
+                errorMessage = "No response from server."
+                return nil
+            }
+            guard http.statusCode == 200 else {
+                // Only one of these is actionable, and it's the one the user
+                // can't guess: a 401 on an endpoint that exists solely to
+                // start a sign-in is about the Atlas session, not Gmail, so
+                // it must not read as "Gmail refused you."
+                errorMessage =
+                    http.statusCode == 401
+                    ? "Your session has expired. Sign out and back in."
+                    : "Couldn't start Gmail sign-in (server returned \(http.statusCode))."
+                return nil
+            }
+
+            let authorizationUrl = try Self.responseDecoder
+                .decode(StartResponse.self, from: data).authorizationUrl
+            guard let url = URL(string: authorizationUrl) else {
+                errorMessage = "Couldn't start Gmail sign-in (the server returned an unusable URL)."
+                return nil
+            }
+            return url
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
         }
     }
 

@@ -69,12 +69,12 @@ def get_candidates(
 ) -> GmailCandidatesResponse:
     """Reads the signed-in user's unread mail and extracts event candidates.
 
-    `user` is unused in the body on purpose: this is still the single-user
-    Gmail connection stored server-side by `google_auth`, so there is no
-    per-user mailbox to select. The dependency is here because this route
-    reads a real inbox and spends real LLM calls doing it, and until now
-    anyone who could reach the port could trigger both without presenting a
-    token. Two distinct 401s are possible -- see
+    `user` selects the mailbox: Google credentials are stored per Supabase
+    user (see `google_auth`), so `user.id` is what decides whose inbox this
+    reads -- passing it to load/save/clear_credentials is the authorization
+    boundary, not a formality. (It was previously unused here, back when one
+    shared server-side credential file meant every caller got whichever
+    inbox had been connected last.) Two distinct 401s are possible -- see
     `GMAIL_NOT_CONNECTED_DETAIL`.
     """
     if len(exclude_message_ids) > MAX_EXCLUDE_IDS:
@@ -91,7 +91,7 @@ def get_candidates(
             ),
         )
 
-    credentials = load_credentials()
+    credentials = load_credentials(user.id)
     if credentials is None:
         raise HTTPException(status_code=401, detail=GMAIL_NOT_CONNECTED_DETAIL)
 
@@ -113,9 +113,9 @@ def get_candidates(
             # it so `/auth/google/status` (and the app's "Connect Gmail" vs.
             # "Check Gmail" button choice) reflects reality instead of
             # claiming a connection that no longer works.
-            clear_credentials()
+            clear_credentials(user.id)
             raise HTTPException(status_code=401, detail=GMAIL_NOT_CONNECTED_DETAIL)
-        save_credentials(credentials)
+        save_credentials(user.id, credentials)
 
     try:
         messages, skipped_reviewed_count = fetch_recent_unread_messages(

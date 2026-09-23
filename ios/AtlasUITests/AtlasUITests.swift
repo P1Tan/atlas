@@ -150,17 +150,46 @@ final class AtlasUITests: XCTestCase {
         sleep(1) // and again on the way back down
     }
 
-    /// Assumes Gmail is already connected on this machine (real OAuth
-    /// completed in Increment 3.1) -- doesn't tap the button, since that
-    /// would fetch real unread mail. Doesn't cover the disconnected state,
-    /// since forcing a disconnect here would blow away a real, working
-    /// credential just for a UI assertion.
-    func testCheckGmailButtonAppearsWhenGmailIsConnected() async throws {
+    /// The connected state is deliberately NOT asserted any more.
+    ///
+    /// This used to be `testCheckGmailButtonAppearsWhenGmailIsConnected`,
+    /// and it only ever passed because the backend kept ONE shared
+    /// server-side Google credential: whoever had completed real OAuth on
+    /// this machine made `/auth/google/status` answer `connected: true` for
+    /// every caller, this test account included. That is precisely the bug
+    /// the per-user credentials change fixed, so the assertion it rested on
+    /// is gone with it. `atlas-uitest@example.com` has no Google credential
+    /// of its own and cannot get one -- it isn't a real Google account, so
+    /// nothing can complete consent for it -- which makes the connected
+    /// state unreachable from a UI test, not merely inconvenient to set up.
+    ///
+    /// What is still assertable, and is what actually guards the Gmail
+    /// entry point, is the disconnected state: the Connect button, and the
+    /// consent alert that stands between a tap and any OAuth at all. The
+    /// alert is dismissed with Cancel on purpose -- "Continue to Google
+    /// Sign-In" leaves the app for Safari and a real Google consent screen,
+    /// which a test must never start.
+    func testConnectGmailButtonShowsConsentAlertWhenGmailIsNotConnected() async throws {
         let app = XCUIApplication()
         try await TestAuthHelper.launchSignedIn(app)
         app.tabBars.buttons["Email"].tap()
 
-        XCTAssertTrue(app.buttons["CheckGmailButton"].waitForExistence(timeout: 10))
+        let connectButton = app.buttons["ConnectGmailButton"]
+        XCTAssertTrue(
+            connectButton.waitForExistence(timeout: 10),
+            "Expected the disconnected state for the UI test account -- is the backend serving per-user Google credentials?"
+        )
+        XCTAssertFalse(app.buttons["CheckGmailButton"].exists)
+
+        connectButton.tap()
+
+        let consentAlert = app.alerts["Connect Gmail?"]
+        XCTAssertTrue(consentAlert.waitForExistence(timeout: 5))
+        XCTAssertTrue(consentAlert.buttons["Continue to Google Sign-In"].exists)
+
+        consentAlert.buttons["Cancel"].tap()
+        XCTAssertTrue(consentAlert.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(connectButton.exists)
     }
 
     /// Launches signed in with `text` already waiting in `ShareInbox`, exactly
